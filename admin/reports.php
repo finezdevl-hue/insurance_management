@@ -31,7 +31,7 @@ if ($reportType === 'insurance') {
     // Insurance Expiry Query
     $query = "
         SELECT i.expiry_date, i.policy_number, i.premium_amount, ic.name as company_name,
-               v.vehicle_number, v.brand, v.model,
+               v.vehicle_number, 'N/A' as brand, '' as model,
                c.name as customer_name, c.mobile_number,
                u.shop_name
         FROM insurances i
@@ -57,7 +57,7 @@ if ($reportType === 'insurance') {
     // Pollution Expiry Query
     $query = "
         SELECT p.expiry_date, p.certificate_number,
-               v.vehicle_number, v.brand, v.model,
+               v.vehicle_number, 'N/A' as brand, '' as model,
                c.name as customer_name, c.mobile_number,
                u.shop_name
         FROM pollution_certificates p

@@ -1,0 +1,3 @@
+[2026-09-16 10:52:17] [QUERY] [Time: 2050.40ms] [User: #0] [IP: CLI] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-16 10:52:17] [QUERY] [Time: 2.45ms] [User: #0] [IP: CLI] Query: SELECT * FROM users LIMIT 5 | Params: [] | Status: SUCCESS
+[2026-09-16 10:52:40] [QUERY] [Time: 2038.58ms] [User: #0] [IP: CLI] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS

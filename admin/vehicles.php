@@ -15,14 +15,70 @@ $pageTitle = 'Master Vehicle Registry';
 $pageHeading = 'Vehicles Registry';
 $activePage = 'vehicles';
 
+$action = $_GET['action'] ?? 'list';
+
+
+
+if ($action === 'export_csv_pollution') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=all_pollution_' . date('Ymd_His') . '.csv');
+    $output = fopen('php://output', 'w');
+    fputcsv($output, ['agent_username', 'customer_name', 'customer_mobile', 'vehicle_number', 'certificate_number', 'start_date', 'expiry_date'], ',', '"', '\\');
+    
+    $stmt = $db->query("
+        SELECT u.username as agent_username, c.name as customer_name, c.mobile_number, v.vehicle_number, p.certificate_number, p.start_date, p.expiry_date
+        FROM pollution_certificates p
+        JOIN vehicles v ON p.vehicle_id = v.id
+        JOIN customers c ON v.customer_id = c.id
+        JOIN users u ON p.agent_id = u.id
+        ORDER BY u.username, v.vehicle_number
+    ");
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        fputcsv($output, $row, ',', '"', '\\');
+    }
+    fclose($output);
+    exit;
+}
+
+if ($action === 'export_csv_insurance') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=all_insurances_' . date('Ymd_His') . '.csv');
+    $output = fopen('php://output', 'w');
+    fputcsv($output, ['agent_username', 'customer_name', 'customer_mobile', 'vehicle_number', 'insurance_company', 'policy_number', 'insurance_type', 'start_date', 'expiry_date', 'premium_amount'], ',', '"', '\\');
+    
+    $stmt = $db->query("
+        SELECT u.username as agent_username, c.name as customer_name, c.mobile_number, v.vehicle_number, ic.name as company, i.policy_number, i.insurance_type, i.start_date, i.expiry_date, i.premium_amount
+        FROM insurances i
+        JOIN vehicles v ON i.vehicle_id = v.id
+        JOIN customers c ON v.customer_id = c.id
+        JOIN insurance_companies ic ON i.insurance_company_id = ic.id
+        JOIN users u ON i.agent_id = u.id
+        ORDER BY u.username, v.vehicle_number
+    ");
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        fputcsv($output, $row, ',', '"', '\\');
+    }
+    fclose($output);
+    exit;
+}
+
 include_once __DIR__ . '/../includes/header.php';
 ?>
 
 <div class="card shadow-sm border-0">
-    <div class="card-header bg-white py-3">
+    <div class="card-header bg-white py-3 d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
             <i class="fa-solid fa-car-side text-primary fs-5"></i>
             <h5 class="m-0 font-weight-700">All Registered Vehicles</h5>
+        </div>
+        <div class="d-flex gap-2">
+
+            <a href="vehicles.php?action=export_csv_pollution" class="btn btn-light border btn-sm text-info">
+                <i class="fa-solid fa-download me-1"></i> Export Pollution
+            </a>
+            <a href="vehicles.php?action=export_csv_insurance" class="btn btn-light border btn-sm text-warning">
+                <i class="fa-solid fa-download me-1"></i> Export Insurances
+            </a>
         </div>
     </div>
     <div class="card-body">
@@ -30,27 +86,26 @@ include_once __DIR__ . '/../includes/header.php';
         <table class="table table-hover align-middle datatable w-100">
             <thead>
                 <tr>
-                    <th>Vehicle Details</th>
-                    <th>Owner / Agent</th>
-                    <th>RC Expiry</th>
+                    <th>Vehicle Registration Number</th>
+                    <th>Owner / Agent Partner</th>
                     <th>Insurance Details</th>
                     <th>Pollution Certificate</th>
                 </tr>
             </thead>
             <tbody>
                 <?php
-                // Query all vehicles with their owner, agent, vehicle type, most recent insurance and pollution
+                // Query all vehicles with their owner, agent, most recent insurance and pollution
                 $stmt = $db->query("
                     SELECT 
-                        v.*, 
-                        vt.name as type_name,
+                        v.id,
+                        v.vehicle_number,
+                        v.created_at,
                         c.name as customer_name,
                         c.mobile_number as customer_mobile,
                         u.shop_name,
                         i.policy_number, i.expiry_date as ins_expiry, i.document_path as ins_doc, ic.name as company_name,
                         p.certificate_number, p.expiry_date as puc_expiry, p.document_path as puc_doc
                     FROM vehicles v
-                    JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
                     JOIN customers c ON v.customer_id = c.id
                     JOIN users u ON v.agent_id = u.id
                     LEFT JOIN insurances i ON i.id = (
@@ -68,38 +123,13 @@ include_once __DIR__ . '/../includes/header.php';
                 ");
                 
                 while ($vh = $stmt->fetch()):
-                    // Expiry calculations
-                    $rcStatus = getExpiryStatus($vh['rc_expiry_date']);
                     $insStatus = $vh['ins_expiry'] ? getExpiryStatus($vh['ins_expiry']) : null;
                     $pucStatus = $vh['puc_expiry'] ? getExpiryStatus($vh['puc_expiry']) : null;
-                    
-                    // Vehicle thumbnail image
-                    $imagePath = '../uploads/vehicles/' . $vh['image_path'];
-                    if (empty($vh['image_path']) || !file_exists($imagePath)) {
-                        $imageSrc = '../assets/css/placeholder_car.png'; // Handled via CSS or custom fallback icon
-                    } else {
-                        $imageSrc = $imagePath;
-                    }
                 ?>
                     <tr>
-                        <!-- Vehicle Brand, Number & Model -->
+                        <!-- Vehicle Number -->
                         <td>
-                            <div class="d-flex align-items-center gap-3">
-                                <?php if (!empty($vh['image_path'])): ?>
-                                    <img src="../uploads/vehicles/<?php echo $vh['image_path']; ?>" alt="Vehicle" class="img-thumbnail" style="width: 60px; height: 45px; object-fit: cover; border-radius: var(--radius-sm);">
-                                <?php else: ?>
-                                    <div class="bg-light d-flex align-items-center justify-content-center text-muted" style="width: 60px; height: 45px; border-radius: var(--radius-sm); border: 1px dashed var(--border-color);">
-                                        <i class="fa-solid fa-car fs-5"></i>
-                                    </div>
-                                <?php endif; ?>
-                                <div>
-                                    <h6 class="m-0 font-weight-700 text-primary"><?php echo sanitize($vh['vehicle_number']); ?></h6>
-                                    <span class="d-block small text-main font-weight-500"><?php echo sanitize($vh['brand'] . ' ' . $vh['model']); ?></span>
-                                    <span class="text-muted small" style="font-size: 0.75rem;">
-                                        Type: <?php echo sanitize($vh['type_name']); ?> | Fuel: <?php echo sanitize($vh['fuel_type']); ?>
-                                    </span>
-                                </div>
-                            </div>
+                            <h6 class="m-0 font-weight-700 text-primary fs-6"><?php echo sanitize($vh['vehicle_number']); ?></h6>
                         </td>
                         <!-- Owner & Agent -->
                         <td>
@@ -108,15 +138,6 @@ include_once __DIR__ . '/../includes/header.php';
                             <span class="badge bg-light text-muted border mt-1" style="font-size: 0.7rem;">
                                 Agent: <?php echo sanitize($vh['shop_name']); ?>
                             </span>
-                        </td>
-                        <!-- RC Expiry -->
-                        <td>
-                            <span class="badge <?php echo $rcStatus['badge']; ?> mb-1">
-                                <?php echo sanitize($rcStatus['text']); ?>
-                            </span>
-                            <small class="d-block text-muted" style="font-size: 0.75rem;">
-                                Date: <?php echo date('d-M-Y', strtotime($vh['rc_expiry_date'])); ?>
-                            </small>
                         </td>
                         <!-- Insurance Details -->
                         <td>

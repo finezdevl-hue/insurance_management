@@ -31,17 +31,12 @@ function getAgentCsvHeaders() {
         'pincode',
         'mobile_number',
         'whatsapp_number',
-        'gst_number',
-        'license_number',
-        'pan_number',
-        'business_type',
         'expiry_date',
         'access_health_insurance',
         'access_vehicle_insurance',
         'access_pollution',
         'message_balance',
-        'shop_logo',
-        'shop_banner'
+        'shop_logo'
     ];
 }
 
@@ -154,15 +149,19 @@ if ($action === 'renew' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 // D. Handle Message Recharge
 if ($action === 'recharge' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $agentId = (int)($_POST['id'] ?? 0);
-    $rechargeAmount = isset($_POST['recharge_amount']) ? (float)$_POST['recharge_amount'] : 0;
+    $rechargeCount = (int)($_POST['recharge_count'] ?? $_POST['recharge_amount'] ?? 0);
 
     try {
-        $result = rechargeAgentMessages($agentId, $rechargeAmount, $_SESSION['user_id'] ?? null);
+        if (isset($_POST['recharge_count'])) {
+            $result = rechargeAgentMessagesByCount($agentId, $rechargeCount, $_SESSION['user_id'] ?? null);
+        } else {
+            $result = rechargeAgentMessages($agentId, (float)$_POST['recharge_amount'], $_SESSION['user_id'] ?? null);
+        }
         logActivity(
             'Recharge Agent Messages',
-            "Recharged {$result['agent']['username']} with Rs {$result['amount']} for {$result['messages_credited']} messages at Rs {$result['unit_price']} each."
+            "Recharged {$result['agent']['username']} with {$result['messages_credited']} messages (₹{$result['amount']} at ₹{$result['unit_price']}/msg)."
         );
-        $_SESSION['alert_success'] = "Message recharge completed. {$result['agent']['shop_name']} received {$result['messages_credited']} messages.";
+        $_SESSION['alert_success'] = "Message recharge completed. {$result['agent']['shop_name']} received " . number_format($result['messages_credited']) . " messages.";
     } catch (Throwable $e) {
         $_SESSION['alert_error'] = 'Message recharge failed: ' . $e->getMessage();
     }
@@ -175,9 +174,9 @@ if ($action === 'export_csv') {
     $headers = getAgentCsvHeaders();
     $stmt = $db->query("
         SELECT username, email, status, shop_name, shop_owner_name, shop_address, city, state, pincode,
-               mobile_number, whatsapp_number, gst_number, license_number, pan_number, business_type,
+               mobile_number, whatsapp_number,
                expiry_date, access_health_insurance, access_vehicle_insurance, access_pollution,
-               message_balance, shop_logo, shop_banner
+               message_balance, shop_logo
         FROM users
         WHERE role = 'agent'
         ORDER BY id ASC
@@ -187,7 +186,7 @@ if ($action === 'export_csv') {
     header('Content-Disposition: attachment; filename=agents_' . date('Ymd_His') . '.csv');
 
     $output = fopen('php://output', 'w');
-    fputcsv($output, $headers);
+    fputcsv($output, $headers, ',', '"', '\\');
 
     while ($agent = $stmt->fetch()) {
         fputcsv($output, [
@@ -203,18 +202,13 @@ if ($action === 'export_csv') {
             $agent['pincode'],
             $agent['mobile_number'],
             $agent['whatsapp_number'],
-            $agent['gst_number'],
-            $agent['license_number'],
-            $agent['pan_number'],
-            $agent['business_type'],
             $agent['expiry_date'],
             (int)$agent['access_health_insurance'],
             (int)$agent['access_vehicle_insurance'],
             (int)$agent['access_pollution'],
             (int)$agent['message_balance'],
-            $agent['shop_logo'],
-            $agent['shop_banner']
-        ]);
+            $agent['shop_logo']
+        ], ',', '"', '\\');
     }
 
     fclose($output);
@@ -238,7 +232,7 @@ if ($action === 'import_csv' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Unable to read the uploaded CSV file.');
         }
 
-        $csvHeaders = fgetcsv($handle);
+        $csvHeaders = fgetcsv($handle, 0, ',', '"', '\\');
         if (!$csvHeaders) {
             fclose($handle);
             throw new RuntimeException('The uploaded CSV file is empty.');
@@ -263,7 +257,7 @@ if ($action === 'import_csv' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $db->beginTransaction();
 
-        while (($rowData = fgetcsv($handle)) !== false) {
+        while (($rowData = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
             $rowNumber++;
 
             if (count(array_filter($rowData, static function ($value) {
@@ -290,17 +284,12 @@ if ($action === 'import_csv' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $pincode = csvValue($row, 'pincode');
             $mobileNumber = csvValue($row, 'mobile_number');
             $whatsappNumber = csvValue($row, 'whatsapp_number');
-            $gstNumber = csvValue($row, 'gst_number');
-            $licenseNumber = csvValue($row, 'license_number');
-            $panNumber = csvValue($row, 'pan_number');
-            $businessType = csvValue($row, 'business_type');
             $expiryDate = normalizeCsvDate(csvValue($row, 'expiry_date'));
             $accessHealth = normalizeCsvBoolean(csvValue($row, 'access_health_insurance', '1'), 1);
             $accessVehicle = normalizeCsvBoolean(csvValue($row, 'access_vehicle_insurance', '1'), 1);
             $accessPollution = normalizeCsvBoolean(csvValue($row, 'access_pollution', '1'), 1);
             $messageBalance = max(0, (int)csvValue($row, 'message_balance', '0'));
             $shopLogo = csvValue($row, 'shop_logo', 'logo_default.png') ?: 'logo_default.png';
-            $shopBanner = csvValue($row, 'shop_banner', 'banner_default.png') ?: 'banner_default.png';
 
             if ($username === '' || $email === '' || $shopName === '' || $expiryDate === null) {
                 $skippedRows[] = "Row {$rowNumber}: username, email, shop_name, and expiry_date are required.";
@@ -320,17 +309,15 @@ if ($action === 'import_csv' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $query = "
                     UPDATE users
                     SET username = ?, email = ?, status = ?, shop_name = ?, shop_owner_name = ?, shop_address = ?,
-                        city = ?, state = ?, pincode = ?, mobile_number = ?, whatsapp_number = ?, gst_number = ?,
-                        license_number = ?, pan_number = ?, business_type = ?, expiry_date = ?,
+                        city = ?, state = ?, pincode = ?, mobile_number = ?, whatsapp_number = ?, expiry_date = ?,
                         access_health_insurance = ?, access_vehicle_insurance = ?, access_pollution = ?,
-                        message_balance = ?, shop_logo = ?, shop_banner = ?
+                        message_balance = ?, shop_logo = ?
                 ";
                 $params = [
                     $username, $email, $status, $shopName, $shopOwnerName, $shopAddress,
-                    $city, $state, $pincode, $mobileNumber, $whatsappNumber, $gstNumber,
-                    $licenseNumber, $panNumber, $businessType, $expiryDate,
+                    $city, $state, $pincode, $mobileNumber, $whatsappNumber, $expiryDate,
                     $accessHealth, $accessVehicle, $accessPollution, $messageBalance,
-                    $shopLogo, $shopBanner
+                    $shopLogo
                 ];
 
                 if ($password !== '') {
@@ -354,17 +341,16 @@ if ($action === 'import_csv' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $stmtInsert = $db->prepare("
                 INSERT INTO users (
-                    username, password, email, role, status, shop_name, shop_owner_name, shop_logo, shop_banner,
-                    shop_address, city, state, pincode, mobile_number, whatsapp_number, gst_number,
-                    license_number, pan_number, business_type, expiry_date, access_health_insurance,
+                    username, password, email, role, status, shop_name, shop_owner_name, shop_logo,
+                    shop_address, city, state, pincode, mobile_number, whatsapp_number,
+                    expiry_date, access_health_insurance,
                     access_vehicle_insurance, access_pollution, message_balance
-                ) VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmtInsert->execute([
                 $username, password_hash($password, PASSWORD_DEFAULT), $email, $status, $shopName, $shopOwnerName,
-                $shopLogo, $shopBanner, $shopAddress, $city, $state, $pincode, $mobileNumber,
-                $whatsappNumber, $gstNumber, $licenseNumber, $panNumber, $businessType,
-                $expiryDate, $accessHealth, $accessVehicle, $accessPollution, $messageBalance
+                $shopLogo, $shopAddress, $city, $state, $pincode, $mobileNumber,
+                $whatsappNumber, $expiryDate, $accessHealth, $accessVehicle, $accessPollution, $messageBalance
             ]);
             $createdCount++;
         }
@@ -390,7 +376,7 @@ if ($action === 'import_csv' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // G. Handle Create or Update Form POST
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !in_array($action, ['renew', 'recharge', 'import_csv'], true)) {
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && !in_array($action, ['renew', 'recharge', 'import_csv'], true)) {
     $agentId = isset($_POST['id']) ? (int)$_POST['id'] : null;
     
     // Core parameters
@@ -407,12 +393,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !in_array($action, ['renew', 'recha
     $pincode = trim($_POST['pincode']);
     $mobileNumber = trim($_POST['mobile_number']);
     $whatsappNumber = trim($_POST['whatsapp_number']);
-    $gstNumber = trim($_POST['gst_number']);
-    $licenseNumber = trim($_POST['license_number']);
-    $panNumber = trim($_POST['pan_number']);
-    $businessType = trim($_POST['business_type']);
     $status = $_POST['status'] ?? 'active';
-    $expiryDate = $_POST['expiry_date'] ?? null;
+    $expiryDate = !empty($_POST['expiry_date']) ? $_POST['expiry_date'] : '2099-12-31';
     
     // Service Access Permissions
     $accessHealth = isset($_POST['access_health_insurance']) ? 1 : 0;
@@ -420,8 +402,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !in_array($action, ['renew', 'recha
     $accessPollution = isset($_POST['access_pollution']) ? 1 : 0;
     
     // Validations
-    if (empty($username) || empty($email) || empty($shopName) || empty($expiryDate)) {
-        $error = 'Username, Email, Shop Name, and License Expiry Date are required.';
+    if (empty($username) || empty($email) || empty($shopName)) {
+        $error = 'Username, Email, and Agency Name are required.';
     } else {
         try {
             // Check for unique username & email
@@ -437,21 +419,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !in_array($action, ['renew', 'recha
             if ($exists > 0) {
                 $error = 'Username or Email is already registered by another user.';
             } else {
-                // File uploads
+                // File upload
                 $shopLogo = null;
-                $shopBanner = null;
                 
                 if (isset($_FILES['shop_logo']) && $_FILES['shop_logo']['error'] === UPLOAD_ERR_OK) {
                     $uploadedLogo = handleFileUpload($_FILES['shop_logo'], 'logos', ['jpg', 'jpeg', 'png']);
                     if ($uploadedLogo) {
                         $shopLogo = $uploadedLogo;
-                    }
-                }
-                
-                if (isset($_FILES['shop_banner']) && $_FILES['shop_banner']['error'] === UPLOAD_ERR_OK) {
-                    $uploadedBanner = handleFileUpload($_FILES['shop_banner'], 'banners', ['jpg', 'jpeg', 'png']);
-                    if ($uploadedBanner) {
-                        $shopBanner = $uploadedBanner;
                     }
                 }
                 
@@ -461,14 +435,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !in_array($action, ['renew', 'recha
                         UPDATE users 
                         SET username = ?, email = ?, shop_name = ?, shop_owner_name = ?, shop_address = ?, 
                             city = ?, state = ?, pincode = ?, mobile_number = ?, whatsapp_number = ?, 
-                            gst_number = ?, license_number = ?, pan_number = ?, business_type = ?, status = ?,
-                            expiry_date = ?, access_health_insurance = ?, access_vehicle_insurance = ?, access_pollution = ?
+                            status = ?, expiry_date = ?, access_health_insurance = ?, access_vehicle_insurance = ?, access_pollution = ?
                     ";
                     $params = [
                         $username, $email, $shopName, $shopOwnerName, $shopAddress, 
                         $city, $state, $pincode, $mobileNumber, $whatsappNumber, 
-                        $gstNumber, $licenseNumber, $panNumber, $businessType, $status,
-                        $expiryDate, $accessHealth, $accessVehicle, $accessPollution
+                        $status, $expiryDate, $accessHealth, $accessVehicle, $accessPollution
                     ];
                     
                     // If a new password is set
@@ -481,10 +453,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !in_array($action, ['renew', 'recha
                     if ($shopLogo) {
                         $query .= ", shop_logo = ?";
                         $params[] = $shopLogo;
-                    }
-                    if ($shopBanner) {
-                        $query .= ", shop_banner = ?";
-                        $params[] = $shopBanner;
                     }
                     
                     $query .= " WHERE id = ? AND role = 'agent'";
@@ -507,16 +475,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !in_array($action, ['renew', 'recha
                         $stmt = $db->prepare("
                             INSERT INTO users (
                                 username, password, email, role, status, shop_name, shop_owner_name, 
-                                shop_logo, shop_banner, shop_address, city, state, pincode, 
-                                mobile_number, whatsapp_number, gst_number, license_number, pan_number, business_type,
-                                expiry_date, access_health_insurance, access_vehicle_insurance, access_pollution
-                            ) VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                shop_logo, shop_address, city, state, pincode, 
+                                mobile_number, whatsapp_number, expiry_date, access_health_insurance, access_vehicle_insurance, access_pollution
+                            ) VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ");
                         $stmt->execute([
                             $username, $hashedPass, $email, $status, $shopName, $shopOwnerName,
-                            $shopLogo ?: 'logo_default.png', $shopBanner ?: 'banner_default.png', $shopAddress, $city, $state, $pincode,
-                            $mobileNumber, $whatsappNumber, $gstNumber, $licenseNumber, $panNumber, $businessType,
-                            $expiryDate, $accessHealth, $accessVehicle, $accessPollution
+                            $shopLogo ?: 'logo_default.png', $shopAddress, $city, $state, $pincode,
+                            $mobileNumber, $whatsappNumber, $expiryDate, $accessHealth, $accessVehicle, $accessPollution
                         ]);
                         
                         logActivity('Create Agent', "Created new agent: $username (Shop: $shopName)");
@@ -565,32 +531,81 @@ include_once __DIR__ . '/../includes/header.php';
             <table class="table table-hover align-middle datatable w-100">
                 <thead>
                     <tr>
-                        <th>Agent / Shop Info</th>
+                        <th>Agent / Agency Info</th>
                         <th>Owner / Contact</th>
                         <th>Location</th>
                         <th>Registration Details</th>
                         <th>Message Wallet</th>
-                        <th>Account Expiry</th>
                         <th>Status</th>
                         <th class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php
-                    $stmt = $db->query("SELECT * FROM users WHERE role = 'agent' ORDER BY id DESC");
+                    $stmt = $db->query("SELECT a.*, (SELECT COUNT(*) FROM users s WHERE s.parent_agent_id = a.id AND s.role = 'shop') as shop_count FROM users a WHERE a.role = 'agent' ORDER BY a.id DESC");
                     while ($agent = $stmt->fetch()):
                         $statusBadge = ($agent['status'] === 'active') ? 'badge-active' : 'badge-suspended';
                         $wallet = getAgentMessageSummary((int)$agent['id']);
+                        
+                        // Fetch sub-shops under this agent
+                        $stmtSub = $db->prepare("SELECT * FROM users WHERE parent_agent_id = ? AND role = 'shop' ORDER BY id DESC");
+                        $stmtSub->execute([$agent['id']]);
+                        $subShops = $stmtSub->fetchAll();
                     ?>
                         <tr>
                             <td>
-                                <div class="d-flex align-items-center gap-3">
-                                    <div class="user-avatar text-uppercase bg-light border font-weight-700">
-                                        <?php echo substr(sanitize($agent['shop_name']), 0, 2); ?>
+                                <div class="d-flex align-items-center">
+                                    <div class="avatar-circle me-3">
+                                        <i class="fa-solid fa-building text-primary"></i>
                                     </div>
                                     <div>
                                         <h6 class="m-0 font-weight-600 text-main"><?php echo sanitize($agent['shop_name']); ?></h6>
                                         <small class="text-muted">User: @<?php echo sanitize($agent['username']); ?></small>
+                                        <div class="mt-1">
+                                            <button class="btn btn-xs btn-outline-primary rounded-pill px-2.5 py-1 font-weight-600 text-nowrap" type="button" data-bs-toggle="collapse" data-bs-target="#subShopsRow_<?php echo $agent['id']; ?>" aria-expanded="false">
+                                                <i class="fa-solid fa-store me-1"></i><?php echo count($subShops); ?> Sub-Shops <i class="fa-solid fa-chevron-down ms-1" style="font-size: 0.7rem;"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Sub-Shops Collapsible Drawer (Inside Column 1 to avoid DataTables column count errors) -->
+                                <div id="subShopsRow_<?php echo $agent['id']; ?>" class="collapse mt-3" style="min-width: 280px;">
+                                    <div class="card border border-primary-subtle shadow-sm rounded-3 overflow-hidden">
+                                        <div class="card-header bg-primary-subtle py-1.5 px-3 d-flex align-items-center justify-content-between">
+                                            <span class="fw-bold text-primary" style="font-size: 0.75rem;">
+                                                <i class="fa-solid fa-store me-1"></i>Sub-Shops (<?php echo count($subShops); ?>)
+                                            </span>
+                                            <a href="shops.php?agent_id=<?php echo $agent['id']; ?>" class="btn btn-xs btn-primary font-weight-600 rounded-pill px-2 py-0.5" style="font-size: 0.68rem;">
+                                                <i class="fa-solid fa-gear me-1"></i>Manage
+                                            </a>
+                                        </div>
+                                        <div class="card-body p-0">
+                                            <?php if (count($subShops) > 0): ?>
+                                                <div class="list-group list-group-flush" style="font-size: 0.75rem;">
+                                                    <?php foreach ($subShops as $sh): ?>
+                                                        <div class="list-group-item p-2 d-flex align-items-center justify-content-between">
+                                                            <div>
+                                                                <div class="fw-bold text-dark"><?php echo sanitize($sh['shop_name']); ?></div>
+                                                                <div class="text-muted" style="font-size: 0.7rem;">
+                                                                    <i class="fa-solid fa-user me-1 text-primary"></i><?php echo sanitize($sh['shop_owner_name'] ?: 'N/A'); ?> | 
+                                                                    <i class="fa-solid fa-phone me-1 text-success"></i><?php echo sanitize($sh['mobile_number']); ?>
+                                                                </div>
+                                                            </div>
+                                                            <div class="text-end ms-2">
+                                                                <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill px-2 py-0.5 font-weight-700" style="font-size: 0.68rem;">
+                                                                    <?php echo number_format($sh['message_balance']); ?> msgs
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                            <?php else: ?>
+                                                <div class="p-2.5 text-center text-muted" style="font-size: 0.73rem;">
+                                                    No sub-shops registered yet. <a href="shops.php?agent_id=<?php echo $agent['id']; ?>" class="fw-bold text-primary">+ Add Sub-Shop</a>
+                                                </div>
+                                            <?php endif; ?>
+                                        </div>
                                     </div>
                                 </div>
                             </td>
@@ -600,21 +615,19 @@ include_once __DIR__ . '/../includes/header.php';
                                 <small class="text-muted d-block"><i class="fa-solid fa-envelope fs-7"></i> <?php echo sanitize($agent['email']); ?></small>
                             </td>
                             <td>
-                                <span class="d-block small font-weight-500"><?php echo sanitize($agent['city']); ?></span>
-                                <span class="text-muted small"><?php echo sanitize($agent['state']); ?></span>
+                                <span class="d-block small font-weight-500"><?php echo sanitize($agent['city'] ?: '--'); ?></span>
+                                <span class="text-muted small"><?php echo sanitize($agent['state'] ?: '--'); ?></span>
                             </td>
                             <td>
-                                <span class="d-block small text-muted">Lic: <strong><?php echo sanitize($agent['license_number'] ?: 'N/A'); ?></strong></span>
-                                <span class="d-block small text-muted">GST: <strong><?php echo sanitize($agent['gst_number'] ?: 'N/A'); ?></strong></span>
-                                <div class="mt-2 d-flex flex-wrap gap-1">
+                                <div class="d-flex flex-wrap gap-1">
                                     <?php if ($agent['access_health_insurance']): ?>
-                                        <span class="badge bg-success text-white" style="font-size: 0.65rem;" title="Health Insurance Access"><i class="fa-solid fa-heart-pulse"></i> Health</span>
+                                        <span class="badge bg-success text-white px-2 py-1" style="font-size: 0.72rem;" title="Health Insurance Access"><i class="fa-solid fa-heart-pulse me-1"></i> Health</span>
                                     <?php endif; ?>
                                     <?php if ($agent['access_vehicle_insurance']): ?>
-                                        <span class="badge bg-primary text-white" style="font-size: 0.65rem;" title="Vehicle Insurance Access"><i class="fa-solid fa-car"></i> Vehicle</span>
+                                        <span class="badge bg-primary text-white px-2 py-1" style="font-size: 0.72rem;" title="Vehicle Insurance Access"><i class="fa-solid fa-car me-1"></i> Vehicle</span>
                                     <?php endif; ?>
                                     <?php if ($agent['access_pollution']): ?>
-                                        <span class="badge bg-info text-dark" style="font-size: 0.65rem;" title="Pollution Access"><i class="fa-solid fa-wind"></i> Pollution</span>
+                                        <span class="badge bg-info text-dark px-2 py-1" style="font-size: 0.72rem;" title="Pollution Access"><i class="fa-solid fa-wind me-1"></i> Pollution</span>
                                     <?php endif; ?>
                                 </div>
                             </td>
@@ -624,23 +637,20 @@ include_once __DIR__ . '/../includes/header.php';
                                 <small class="d-block text-muted">Rate: Rs <?php echo number_format((float)$singleMessagePrice, 2); ?>/message</small>
                             </td>
                             <td>
-                                <?php if (!empty($agent['expiry_date'])): 
-                                    $expStatus = getExpiryStatus($agent['expiry_date']);
+                                <?php
+                                $isExpired = !empty($agent['expiry_date']) && (date('Y-m-d') > $agent['expiry_date']);
                                 ?>
-                                    <span class="badge <?php echo $expStatus['badge']; ?> mb-1">
-                                        <?php echo sanitize($expStatus['text']); ?>
-                                    </span>
-                                    <small class="d-block text-muted" style="font-size: 0.72rem;">
-                                        Date: <?php echo date('d-M-Y', strtotime($agent['expiry_date'])); ?>
-                                    </small>
-                                <?php else: ?>
-                                    <span class="badge bg-secondary">No Expiry</span>
-                                <?php endif; ?>
-                            </td>
-                            <td>
-                                <span class="badge <?php echo $statusBadge; ?>">
+                                <span class="badge <?php echo $statusBadge; ?> d-block mb-1" style="width: fit-content;">
                                     <?php echo strtoupper(sanitize($agent['status'])); ?>
                                 </span>
+                                <?php if (!empty($agent['expiry_date'])): ?>
+                                    <small class="d-block <?php echo $isExpired ? 'text-danger font-weight-700' : 'text-muted'; ?>">
+                                        <i class="fa-solid fa-clock-rotate-left me-1"></i>
+                                        <?php echo $isExpired ? 'Expired: ' : 'Exp: '; ?><?php echo date('d-M-Y', strtotime($agent['expiry_date'])); ?>
+                                    </small>
+                                <?php else: ?>
+                                    <small class="text-muted d-block">No expiry set</small>
+                                <?php endif; ?>
                             </td>
                             <td class="text-end">
                                 <div class="dropdown">
@@ -654,13 +664,18 @@ include_once __DIR__ . '/../includes/header.php';
                                             </a>
                                         </li>
                                         <li>
-                                            <a class="dropdown-item" href="agents.php?action=renew&id=<?php echo $agent['id']; ?>">
-                                                <i class="fa-solid fa-arrows-rotate me-2 text-success"></i> Renew License
+                                            <a class="dropdown-item" href="subscriptions.php">
+                                                <i class="fa-solid fa-crown me-2 text-warning"></i> Subscriptions & Renewal
                                             </a>
                                         </li>
                                         <li>
                                             <a class="dropdown-item" href="agents.php?action=recharge&id=<?php echo $agent['id']; ?>">
                                                 <i class="fa-solid fa-bolt me-2 text-warning"></i> Recharge Messages
+                                            </a>
+                                        </li>
+                                        <li>
+                                            <a class="dropdown-item" href="shops.php?agent_id=<?php echo $agent['id']; ?>">
+                                                <i class="fa-solid fa-store me-2 text-primary"></i> Sub-Shops Portal
                                             </a>
                                         </li>
                                         <li>
@@ -706,6 +721,7 @@ include_once __DIR__ . '/../includes/header.php';
                     confirmButtonText: 'Yes, delete agent!'
                 }).then((result) => {
                     if (result.isConfirmed) {
+                        $('#loader-wrapper').fadeIn(200);
                         window.location.href = url;
                     }
                 });
@@ -858,18 +874,39 @@ include_once __DIR__ . '/../includes/header.php';
                             <input type="text" class="form-control" value="<?php echo sanitize($agent['username']); ?>" disabled>
                         </div>
 
-                        <div class="mb-2">
-                            <label for="recharge_amount" class="form-label">Recharge Amount (Rupees) <span class="text-danger">*</span></label>
-                            <input type="number" min="0.01" step="0.01" class="form-control" id="recharge_amount" name="recharge_amount" required placeholder="e.g. 500">
+                        <div class="mb-3">
+                            <label for="recharge_count" class="form-label font-weight-600">Number of Messages to Add <span class="text-danger">*</span></label>
+                            <input type="number" min="1" step="1" class="form-control form-control-lg" id="recharge_count" name="recharge_count" required placeholder="e.g. 1000" oninput="calculateAgentCost(this.value)">
+                            <div class="form-text mt-2" id="agent_cost_preview">Rate: ₹<?php echo number_format((float)$singleMessagePrice, 2); ?> per message</div>
                         </div>
 
-                        <div class="form-text mb-4">
-                            Current message price: Rs <?php echo number_format((float)$singleMessagePrice, 2); ?> per message
+                        <div class="d-flex flex-wrap gap-2 mb-4">
+                            <button type="button" class="btn btn-outline-primary btn-sm flex-fill" onclick="setAgentRechargeCount(500)">+500 Msgs</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm flex-fill" onclick="setAgentRechargeCount(1000)">+1,000 Msgs</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm flex-fill" onclick="setAgentRechargeCount(2000)">+2,000 Msgs</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm flex-fill" onclick="setAgentRechargeCount(5000)">+5,000 Msgs</button>
                         </div>
+
+                        <script>
+                        const agentUnitPrice = <?php echo (float)$singleMessagePrice; ?>;
+                        function setAgentRechargeCount(c) {
+                            document.getElementById('recharge_count').value = c;
+                            calculateAgentCost(c);
+                        }
+                        function calculateAgentCost(c) {
+                            const qty = parseInt(c) || 0;
+                            const prev = document.getElementById('agent_cost_preview');
+                            if (qty > 0) {
+                                prev.innerHTML = '<span class="text-success font-weight-600"><i class="fa-solid fa-calculator me-1"></i>Total Cost: ₹' + (qty * agentUnitPrice).toFixed(2) + '</span> <span class="text-muted">(' + qty.toLocaleString() + ' msgs @ ₹' + agentUnitPrice + '/msg)</span>';
+                            } else {
+                                prev.innerHTML = 'Rate: ₹' + agentUnitPrice.toFixed(2) + ' per message';
+                            }
+                        }
+                        </script>
 
                         <div class="d-flex justify-content-end gap-3">
                             <a href="agents.php" class="btn btn-light border">Cancel</a>
-                            <button type="submit" class="btn btn-warning px-4">
+                            <button type="submit" class="btn btn-warning px-4 font-weight-600">
                                 <i class="fa-solid fa-wallet me-1"></i> Recharge Now
                             </button>
                         </div>
@@ -918,124 +955,55 @@ include_once __DIR__ . '/../includes/header.php';
                         </div>
                     <?php endif; ?>
 
-                    <form action="" method="POST" enctype="multipart/form-data">
+                    <form action="" method="POST">
                         <?php if ($isEdit): ?>
                             <input type="hidden" name="id" value="<?php echo $agent['id']; ?>">
                         <?php endif; ?>
 
-                        <!-- Row 1: Credentials -->
-                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-primary"><i class="fa-solid fa-key me-2"></i>1. Portal Access Credentials</h6>
+                        <!-- Section 1: Agent & Partner Information -->
+                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-primary"><i class="fa-solid fa-user-tie me-2"></i>1. Agent & Partner Information</h6>
                         <div class="row g-3 mb-4">
-                            <div class="col-12 col-md-4">
-                                <label for="username" class="form-label">Username <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="username" name="username" required value="<?php echo isset($_POST['username']) ? sanitize($_POST['username']) : ($isEdit ? sanitize($agent['username']) : ''); ?>" placeholder="username_tag">
+                            <div class="col-12 col-md-6">
+                                <label for="shop_name" class="form-label">Agency / Partner Name <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="shop_name" name="shop_name" required value="<?php echo isset($_POST['shop_name']) ? sanitize($_POST['shop_name']) : ($isEdit ? sanitize($agent['shop_name']) : ''); ?>" placeholder="e.g. Speedy Agency">
                             </div>
-                            <div class="col-12 col-md-4">
+                            <div class="col-12 col-md-6">
+                                <label for="shop_owner_name" class="form-label">Agent Contact Name <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="shop_owner_name" name="shop_owner_name" required value="<?php echo isset($_POST['shop_owner_name']) ? sanitize($_POST['shop_owner_name']) : ($isEdit ? sanitize($agent['shop_owner_name']) : ''); ?>" placeholder="e.g. Ramesh Kumar">
+                            </div>
+                            
+                            <div class="col-12 col-md-6">
+                                <label for="mobile_number" class="form-label">Phone / Mobile Number <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="mobile_number" name="mobile_number" required value="<?php echo isset($_POST['mobile_number']) ? sanitize($_POST['mobile_number']) : ($isEdit ? sanitize($agent['mobile_number'] ?? '') : ''); ?>" placeholder="+91 98765 43210">
+                            </div>
+                            <div class="col-12 col-md-6">
                                 <label for="email" class="form-label">Email Address <span class="text-danger">*</span></label>
                                 <input type="email" class="form-control" id="email" name="email" required value="<?php echo isset($_POST['email']) ? sanitize($_POST['email']) : ($isEdit ? sanitize($agent['email']) : ''); ?>" placeholder="agent@speedyagency.com">
                             </div>
+                        </div>
+
+                        <!-- Section 2: Login Credentials & Account Status -->
+                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-primary"><i class="fa-solid fa-key me-2"></i>2. Login Credentials & Status</h6>
+                        <div class="row g-3 mb-4">
                             <div class="col-12 col-md-4">
-                                <label for="password" class="form-label">Password <?php echo $isEdit ? '<span class="text-muted small">(Leave empty to keep current)</span>' : '<span class="text-danger">*</span>'; ?></label>
+                                <label for="username" class="form-label">Login Username <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="username" name="username" required value="<?php echo isset($_POST['username']) ? sanitize($_POST['username']) : ($isEdit ? sanitize($agent['username']) : ''); ?>" placeholder="username_tag">
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label for="password" class="form-label">Password <?php echo $isEdit ? '<span class="text-muted small">(Leave empty to keep)</span>' : '<span class="text-danger">*</span>'; ?></label>
                                 <input type="password" class="form-control" id="password" name="password" <?php echo $isEdit ? '' : 'required'; ?> placeholder="Min 6 characters">
                             </div>
-                        </div>
-
-                        <!-- Row 2: Shop Details -->
-                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-primary"><i class="fa-solid fa-store me-2"></i>2. Shop & Business Details</h6>
-                        <div class="row g-3 mb-4">
-                            <div class="col-12 col-md-6">
-                                <label for="shop_name" class="form-label">Agency / Shop Name <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="shop_name" name="shop_name" required value="<?php echo isset($_POST['shop_name']) ? sanitize($_POST['shop_name']) : ($isEdit ? sanitize($agent['shop_name']) : ''); ?>" placeholder="e.g. Speedy RTO Consultancy">
-                            </div>
-                            <div class="col-12 col-md-6">
-                                <label for="shop_owner_name" class="form-label">Shop Owner Name</label>
-                                <input type="text" class="form-control" id="shop_owner_name" name="shop_owner_name" value="<?php echo isset($_POST['shop_owner_name']) ? sanitize($_POST['shop_owner_name']) : ($isEdit ? sanitize($agent['shop_owner_name']) : ''); ?>" placeholder="Full Name of the Owner">
-                            </div>
-                            
                             <div class="col-12 col-md-4">
-                                <label for="mobile_number" class="form-label">Mobile Number</label>
-                                <input type="text" class="form-control" id="mobile_number" name="mobile_number" value="<?php echo isset($_POST['mobile_number']) ? sanitize($_POST['mobile_number']) : ($isEdit ? sanitize($agent['mobile_number']) : ''); ?>" placeholder="+91 98765 43210">
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label for="whatsapp_number" class="form-label">WhatsApp Number</label>
-                                <input type="text" class="form-control" id="whatsapp_number" name="whatsapp_number" value="<?php echo isset($_POST['whatsapp_number']) ? sanitize($_POST['whatsapp_number']) : ($isEdit ? sanitize($agent['whatsapp_number']) : ''); ?>" placeholder="WhatsApp number with country code">
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label for="business_type" class="form-label">Business Type</label>
-                                <input type="text" class="form-control" id="business_type" name="business_type" value="<?php echo isset($_POST['business_type']) ? sanitize($_POST['business_type']) : ($isEdit ? sanitize($agent['business_type']) : ''); ?>" placeholder="e.g. Insurance & RTO Agents">
-                            </div>
-                            
-                            <div class="col-12">
-                                <label for="shop_address" class="form-label">Shop Address</label>
-                                <textarea class="form-control" id="shop_address" name="shop_address" rows="2" placeholder="Full physical shop address..."><?php echo isset($_POST['shop_address']) ? sanitize($_POST['shop_address']) : ($isEdit ? sanitize($agent['shop_address']) : ''); ?></textarea>
-                            </div>
-                            
-                            <div class="col-12 col-md-4">
-                                <label for="city" class="form-label">City</label>
-                                <input type="text" class="form-control" id="city" name="city" value="<?php echo isset($_POST['city']) ? sanitize($_POST['city']) : ($isEdit ? sanitize($agent['city']) : ''); ?>" placeholder="City name">
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label for="state" class="form-label">State</label>
-                                <input type="text" class="form-control" id="state" name="state" value="<?php echo isset($_POST['state']) ? sanitize($_POST['state']) : ($isEdit ? sanitize($agent['state']) : ''); ?>" placeholder="State name">
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label for="pincode" class="form-label">Pincode</label>
-                                <input type="text" class="form-control" id="pincode" name="pincode" value="<?php echo isset($_POST['pincode']) ? sanitize($_POST['pincode']) : ($isEdit ? sanitize($agent['pincode']) : ''); ?>" placeholder="Postal code">
-                            </div>
-                        </div>
-
-                        <!-- Row 3: Statutory Details & Uploads -->
-                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-primary"><i class="fa-solid fa-file-invoice me-2"></i>3. Registration & Branding Docs</h6>
-                        <div class="row g-3 mb-4">
-                            <div class="col-12 col-md-4">
-                                <label for="gst_number" class="form-label">GSTIN Number</label>
-                                <input type="text" class="form-control" id="gst_number" name="gst_number" value="<?php echo isset($_POST['gst_number']) ? sanitize($_POST['gst_number']) : ($isEdit ? sanitize($agent['gst_number']) : ''); ?>" placeholder="22AAAAA1111A1Z1">
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label for="license_number" class="form-label">Agent License Number</label>
-                                <input type="text" class="form-control" id="license_number" name="license_number" value="<?php echo isset($_POST['license_number']) ? sanitize($_POST['license_number']) : ($isEdit ? sanitize($agent['license_number']) : ''); ?>" placeholder="LIC-9087-A1">
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label for="pan_number" class="form-label">Permanent Account Number (PAN)</label>
-                                <input type="text" class="form-control" id="pan_number" name="pan_number" value="<?php echo isset($_POST['pan_number']) ? sanitize($_POST['pan_number']) : ($isEdit ? sanitize($agent['pan_number']) : ''); ?>" placeholder="ABCDE1234F">
-                            </div>
-                            
-                            <div class="col-12 col-md-6">
-                                <label for="shop_logo" class="form-label">Shop Logo <span class="text-muted small">(PNG/JPG, Max 2MB)</span></label>
-                                <input type="file" class="form-control" id="shop_logo" name="shop_logo">
-                                <?php if ($isEdit && $agent['shop_logo']): ?>
-                                    <div class="mt-2 text-muted small">
-                                        <i class="fa-regular fa-image me-1"></i> Current Logo: <a href="../uploads/logos/<?php echo $agent['shop_logo']; ?>" target="_blank" class="text-primary"><?php echo sanitize($agent['shop_logo']); ?></a>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                            
-                            <div class="col-12 col-md-6">
-                                <label for="shop_banner" class="form-label">Shop Banner / Banner <span class="text-muted small">(PNG/JPG, Max 2MB)</span></label>
-                                <input type="file" class="form-control" id="shop_banner" name="shop_banner">
-                                <?php if ($isEdit && $agent['shop_banner']): ?>
-                                    <div class="mt-2 text-muted small">
-                                        <i class="fa-regular fa-image me-1"></i> Current Banner: <a href="../uploads/banners/<?php echo $agent['shop_banner']; ?>" target="_blank" class="text-primary"><?php echo sanitize($agent['shop_banner']); ?></a>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                            
-                            <div class="col-12 col-md-6">
                                 <label for="status" class="form-label">Account Status</label>
                                 <select class="form-select" id="status" name="status">
                                     <option value="active" <?php echo (isset($_POST['status']) && $_POST['status'] === 'active') || ($isEdit && $agent['status'] === 'active') ? 'selected' : ''; ?>>Active</option>
                                     <option value="suspended" <?php echo (isset($_POST['status']) && $_POST['status'] === 'suspended') || ($isEdit && $agent['status'] === 'suspended') ? 'selected' : ''; ?>>Suspended</option>
                                 </select>
                             </div>
-                            
-                            <div class="col-12 col-md-6">
-                                <label for="expiry_date" class="form-label">Portal License Expiry Date <span class="text-danger">*</span></label>
-                                <input type="date" class="form-control" id="expiry_date" name="expiry_date" required value="<?php echo isset($_POST['expiry_date']) ? sanitize($_POST['expiry_date']) : ($isEdit && $agent['expiry_date'] ? $agent['expiry_date'] : ''); ?>">
-                            </div>
                         </div>
 
-                        <!-- Row 4: Service Access Permissions -->
-                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-primary"><i class="fa-solid fa-user-shield me-2"></i>4. Service Access Permissions</h6>
+                        <!-- Section 3: Service Access Permissions -->
+                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-primary"><i class="fa-solid fa-user-shield me-2"></i>3. Service Access Permissions</h6>
                         <div class="row g-3 mb-4">
                             <div class="col-12 col-md-4">
                                 <div class="form-check form-switch pt-2">
@@ -1065,7 +1033,7 @@ include_once __DIR__ . '/../includes/header.php';
                         <div class="d-flex align-items-center justify-content-end gap-3">
                             <a href="agents.php" class="btn btn-light border">Cancel</a>
                             <button type="submit" class="btn btn-primary px-4">
-                                <i class="fa-solid fa-floppy-disk me-1"></i> <?php echo $isEdit ? 'Update Details' : 'Create Agent Account'; ?>
+                                <i class="fa-solid fa-floppy-disk me-1"></i> <?php echo $isEdit ? 'Update Agent Details' : 'Create Agent Account'; ?>
                             </button>
                         </div>
                     </form>

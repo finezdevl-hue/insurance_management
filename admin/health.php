@@ -15,14 +15,43 @@ $pageTitle = 'Master Health Insurance Registry';
 $pageHeading = 'Health Insurance Master Registry';
 $activePage = 'health';
 
+$action = $_GET['action'] ?? 'list';
+
+if ($action === 'export_csv_health') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=all_health_policies_' . date('Ymd_His') . '.csv');
+    $output = fopen('php://output', 'w');
+    fputcsv($output, ['agent_username', 'customer_name', 'customer_mobile', 'customer_whatsapp', 'customer_email', 'customer_address', 'insurance_company', 'policy_number', 'policy_name', 'insured_persons', 'start_date', 'expiry_date', 'premium_amount'], ',', '"', '\\');
+    
+    $stmt = $db->query("
+        SELECT u.username as agent_username, c.name as customer_name, c.mobile_number, c.whatsapp_number, c.email, c.address,
+               ic.name as insurance_company, h.policy_number, h.policy_name, h.insured_persons, h.start_date, h.expiry_date, h.premium_amount
+        FROM health_insurances h
+        JOIN users u ON h.agent_id = u.id
+        JOIN customers c ON h.customer_id = c.id
+        JOIN insurance_companies ic ON h.insurance_company_id = ic.id
+        ORDER BY u.username, c.name, h.policy_number
+    ");
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        fputcsv($output, $row, ',', '"', '\\');
+    }
+    fclose($output);
+    exit;
+}
+
 include_once __DIR__ . '/../includes/header.php';
 ?>
 
 <div class="card shadow-sm border-0 animate-fade-in">
-    <div class="card-header bg-white py-3">
+    <div class="card-header bg-white py-3 d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
             <i class="fa-solid fa-heart-pulse text-success fs-5"></i>
             <h5 class="m-0 font-weight-700">All Registered Health Insurance Policies</h5>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="health.php?action=export_csv_health" class="btn btn-light border btn-sm text-success">
+                <i class="fa-solid fa-download me-1"></i> Export Health Policies
+            </a>
         </div>
     </div>
     <div class="card-body">

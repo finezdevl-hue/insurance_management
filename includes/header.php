@@ -33,6 +33,15 @@ $pageTitle = $pageTitle ?? $settings['system_name'];
     <!-- Meta tags for SEO -->
     <meta name="description" content="Manage vehicle details, pollution certificates, and insurance renewals with automatic alerts and bulk WhatsApp notifications.">
     <meta name="author" content="Antigravity System">
+    <meta name="theme-color" content="#10b981">
+    <link rel="manifest" href="../manifest.json">
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('../sw.js').catch(err => {});
+            });
+        }
+    </script>
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -77,7 +86,7 @@ $pageTitle = $pageTitle ?? $settings['system_name'];
                     <button class="sidebar-toggle-btn" id="sidebar-toggle" aria-label="Toggle Sidebar">
                         <i class="fa-solid fa-bars-staggered"></i>
                     </button>
-                    <h5 class="m-0 font-weight-600 text-main d-none d-sm-block">
+                    <h5 class="m-0 font-weight-600 text-main page-heading-title text-truncate" style="max-width: 180px;">
                         <?php echo sanitize($pageHeading ?? 'Dashboard'); ?>
                     </h5>
                 </div>
@@ -128,6 +137,11 @@ $pageTitle = $pageTitle ?? $settings['system_name'];
                                     </a>
                                 </li>
                             <?php endif; ?>
+                            <li>
+                                <a class="dropdown-item py-2 text-success" href="?view=mobile">
+                                    <i class="fa-solid fa-mobile-screen-button me-2"></i> Mobile Version
+                                </a>
+                            </li>
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <a class="dropdown-item py-2 text-danger" href="<?php echo $current_user['role'] === 'admin' ? '../admin/logout.php' : '../agent/logout.php'; ?>">

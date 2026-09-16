@@ -41,8 +41,8 @@ if (isLoggedIn() && !isset($current_user)) {
                 <i class="fa-solid fa-user-tie"></i> Agents Management
             </a>
             
-            <a href="../admin/customers.php" class="menu-item <?php echo $activePage === 'customers' ? 'active' : ''; ?>">
-                <i class="fa-solid fa-users"></i> Customers List
+            <a href="../admin/shops.php" class="menu-item <?php echo $activePage === 'shops' ? 'active' : ''; ?>">
+                <i class="fa-solid fa-store"></i> Sub-Shops & Centers
             </a>
             
             <a href="../admin/vehicles.php" class="menu-item <?php echo $activePage === 'vehicles' ? 'active' : ''; ?>">
@@ -55,6 +55,10 @@ if (isLoggedIn() && !isset($current_user)) {
             
             <div class="menu-label">Settings & Master</div>
             
+            <a href="../admin/subscription_plans.php" class="menu-item <?php echo $activePage === 'subscription_plans' ? 'active' : ''; ?>">
+                <i class="fa-solid fa-crown"></i> Subscription Plans
+            </a>
+
             <a href="../admin/companies.php" class="menu-item <?php echo $activePage === 'companies' ? 'active' : ''; ?>">
                 <i class="fa-solid fa-building-shield"></i> Insurance Companies
             </a>
@@ -69,35 +73,53 @@ if (isLoggedIn() && !isset($current_user)) {
             
             <div class="menu-label">Reports & Logs</div>
             
+            <a href="../admin/subscriptions.php" class="menu-item <?php echo $activePage === 'subscriptions' ? 'active' : ''; ?>">
+                <i class="fa-solid fa-file-invoice-dollar"></i> Agent Subscriptions
+            </a>
+
             <a href="../admin/reports.php" class="menu-item <?php echo $activePage === 'reports' ? 'active' : ''; ?>">
-                <i class="fa-solid fa-file-invoice-dollar"></i> Expiry Reports
+                <i class="fa-solid fa-chart-line"></i> Expiry Reports
             </a>
             
             <a href="../admin/reminders.php" class="menu-item <?php echo $activePage === 'reminders' ? 'active' : ''; ?>">
                 <i class="fa-solid fa-clock-rotate-left"></i> Reminder History
             </a>
             
+            <a href="../admin/recharge_history.php" class="menu-item <?php echo $activePage === 'recharge_history' ? 'active' : ''; ?>">
+                <i class="fa-solid fa-money-bill-transfer"></i> Message Recharges
+            </a>
+            
             <a href="../admin/activity.php" class="menu-item <?php echo $activePage === 'activity' ? 'active' : ''; ?>">
                 <i class="fa-solid fa-list-check"></i> Activity Logs
             </a>
 
-        <?php elseif ($role === 'agent'): ?>
-            <!-- AGENT SIDEBAR -->
+            <a href="../admin/logs.php" class="menu-item <?php echo $activePage === 'logs' ? 'active' : ''; ?>">
+                <i class="fa-solid fa-bug"></i> System & Query Logs
+            </a>
+
+        <?php elseif ($role === 'agent' || $role === 'shop'): ?>
+            <!-- AGENT & SHOP SIDEBAR -->
             <div class="menu-label">Main</div>
             
             <a href="../agent/index.php" class="menu-item <?php echo $activePage === 'dashboard' ? 'active' : ''; ?>">
                 <i class="fa-solid fa-gauge-high"></i> Dashboard
             </a>
             
-            <a href="../agent/profile.php" class="menu-item <?php echo $activePage === 'profile' ? 'active' : ''; ?>">
-                <i class="fa-solid fa-store"></i> Shop Profile
-            </a>
+            <?php if ($role === 'agent'): ?>
+                <a href="../agent/subscriptions.php" class="menu-item <?php echo $activePage === 'subscriptions' ? 'active' : ''; ?>">
+                    <i class="fa-solid fa-crown text-warning"></i> My Subscription & Plans
+                </a>
+
+                <a href="../agent/shops.php" class="menu-item <?php echo $activePage === 'shops' ? 'active' : ''; ?>">
+                    <i class="fa-solid fa-store"></i> Sub-Shops & Outlets
+                </a>
+            <?php else: ?>
+                <a href="../agent/profile.php" class="menu-item <?php echo $activePage === 'profile' ? 'active' : ''; ?>">
+                    <i class="fa-solid fa-store"></i> Outlet Profile
+                </a>
+            <?php endif; ?>
             
             <div class="menu-label">Operations</div>
-            
-            <a href="../agent/customers.php" class="menu-item <?php echo $activePage === 'customers' ? 'active' : ''; ?>">
-                <i class="fa-solid fa-user-group"></i> Manage Customers
-            </a>
             
             <?php if (hasAgentAccess('health')): ?>
                 <a href="../agent/health.php" class="menu-item <?php echo $activePage === 'health' ? 'active' : ''; ?>">
@@ -114,6 +136,16 @@ if (isLoggedIn() && !isset($current_user)) {
             <a href="../agent/reminders.php" class="menu-item <?php echo $activePage === 'reminders' ? 'active' : ''; ?>">
                 <i class="fa-solid fa-bell"></i> Expiry & Renewals
             </a>
+            
+            <div class="menu-label">Logs & History</div>
+            
+            <a href="../agent/recharge_history.php" class="menu-item <?php echo $activePage === 'recharge_history' ? 'active' : ''; ?>">
+                <i class="fa-solid fa-wallet"></i> Recharge History
+            </a>
+            
+            <a href="../agent/sent_history.php" class="menu-item <?php echo $activePage === 'sent_history' ? 'active' : ''; ?>">
+                <i class="fa-solid fa-paper-plane"></i> Sent Messages
+            </a>
         <?php endif; ?>
         
     </div>
@@ -124,7 +156,7 @@ if (isLoggedIn() && !isset($current_user)) {
         <div class="user-profile-widget">
             <div class="user-avatar text-uppercase">
                 <?php 
-                    if ($current_user && !empty($current_user['shop_name']) && $role === 'agent') {
+                    if ($current_user && !empty($current_user['shop_name']) && ($role === 'agent' || $role === 'shop')) {
                         echo substr(sanitize($current_user['shop_name']), 0, 2);
                     } else {
                         echo substr(sanitize($current_user['username']), 0, 2);

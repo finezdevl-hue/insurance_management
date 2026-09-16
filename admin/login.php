@@ -1,7 +1,7 @@
 <?php
 /**
- * Super Admin Login Redirector (Legacy)
- * Redirects to the root unified login gateway portal.
+ * Admin Login Redirector
+ * Redirects to single unified login portal.
  */
 
 require_once __DIR__ . '/../includes/functions.php';

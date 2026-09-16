@@ -29,7 +29,8 @@ if (isset($_POST['send_single_alert'])) {
     $vehicleId = (int)$_POST['vehicle_id'];
     $remType = $_POST['reminder_type'];
     $expiryVal = $_POST['expiry_date'];
-    $quotaCheck = canAgentSendMessages($agentId, 1);
+    $senderUserId = $_SESSION['user_id'];
+    $quotaCheck = canAgentSendMessages($senderUserId, 1);
 
     if (!$quotaCheck['allowed']) {
         $_SESSION['alert_error'] = getMessageLimitError($quotaCheck['balance'], $quotaCheck['requested']);
@@ -47,9 +48,19 @@ if (isset($_POST['send_single_alert'])) {
     if ($customer && $vehNumber) {
         $name = $customer['name'];
         $whatsapp = $customer['whatsapp_number'];
-        $message = "Hello {$name}, your vehicle {$vehNumber} {$remType} will expire on {$expiryVal}. Please renew it soon.";
+        // Fetch specific creator shop or parent agent details for this reminder
+        $shopInfo = getShopDetailsForReminder($vehicleId, $remType, $agentId);
+        $agentMobile = $shopInfo['mobile_number'];
+        $shopAddress = $shopInfo['shop_address'];
+        $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
         
-        $apiResult = sendWhatsAppMessage($whatsapp, $message, $name, $vehNumber, $expiryVal);
+        if ($remType === 'Pollution') {
+            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease visit our testing center at {$shopAddress} (Phone: {$agentMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
+        } else {
+            $message = "Dear Customer,\n\nThis is an important reminder that the {$remType} for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease contact us at {$agentMobile} to process your renewal and ensure continuous validity.\n\nView Testing Centers & Details:\n{$centersUrl}";
+        }
+        
+        $apiResult = sendWhatsAppMessage($whatsapp, $message, $name, $vehNumber, $expiryVal, $agentMobile, $centersUrl);
         $status = $apiResult['success'] ? 'sent' : 'failed';
         
         $daysUntil = getDaysUntil($expiryVal);
@@ -62,7 +73,7 @@ if (isset($_POST['send_single_alert'])) {
         $stmtHistory->execute([$custId, $vehicleId, $remType, $period, $agentId, $status, $message, $apiResult['response']]);
         
         if ($apiResult['success']) {
-            deductAgentMessages($agentId, 1);
+            deductAgentMessages($senderUserId, 1);
             $_SESSION['alert_success'] = "WhatsApp alert sent successfully to {$name}!";
         } else {
             $_SESSION['alert_error'] = 'API dispatch failed: ' . $apiResult['response'];
@@ -100,21 +111,18 @@ if (isset($_POST['send_bulk_alerts'])) {
         $params[] = $agentId;
     }
     
-    $parts[] = "
-        SELECT 'RC' as type, v.rc_expiry_date as expiry_date, v.vehicle_number, c.name as customer_name, c.whatsapp_number, c.id as customer_id, v.id as vehicle_id
-        FROM vehicles v
-        JOIN customers c ON v.customer_id = c.id
-        WHERE v.agent_id = ? AND v.rc_expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
-    ";
-    $params[] = $agentId;
-    
-    $stmt = $db->prepare(implode(" UNION ALL ", $parts));
-    $stmt->execute($params);
-    $allRecs = $stmt->fetchAll();
+    if (count($parts) > 0) {
+        $stmt = $db->prepare(implode(" UNION ALL ", $parts));
+        $stmt->execute($params);
+        $allRecs = $stmt->fetchAll();
+    } else {
+        $allRecs = [];
+    }
     $requiredMessages = count($allRecs);
 
     if ($requiredMessages > 0) {
-        $quotaCheck = canAgentSendMessages($agentId, $requiredMessages);
+        $senderUserId = $_SESSION['user_id'];
+        $quotaCheck = canAgentSendMessages($senderUserId, $requiredMessages);
         if (!$quotaCheck['allowed']) {
             $_SESSION['alert_error'] = getMessageLimitError($quotaCheck['balance'], $quotaCheck['requested']);
             redirect('reminders.php');
@@ -131,9 +139,19 @@ if (isset($_POST['send_bulk_alerts'])) {
         $remType = $rec['type'];
         $expiryVal = $rec['expiry_date'];
         
-        $message = "Hello {$name}, your vehicle {$vehNumber} {$remType} will expire on {$expiryVal}. Please renew it soon.";
+        // Fetch specific creator shop or parent agent details for this reminder
+        $shopInfo = getShopDetailsForReminder($vehicleId, $remType, $agentId);
+        $agentMobile = $shopInfo['mobile_number'];
+        $shopAddress = $shopInfo['shop_address'];
+        $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
         
-        $apiResult = sendWhatsAppMessage($whatsapp, $message, $name, $vehNumber, $expiryVal);
+        if ($remType === 'Pollution') {
+            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease visit our testing center at {$shopAddress} (Phone: {$agentMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
+        } else {
+            $message = "Dear Customer,\n\nThis is an important reminder that the {$remType} for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease contact us at {$agentMobile} to process your renewal and ensure continuous validity.\n\nView Testing Centers & Details:\n{$centersUrl}";
+        }
+        
+        $apiResult = sendWhatsAppMessage($whatsapp, $message, $name, $vehNumber, $expiryVal, $agentMobile, $centersUrl);
         $status = $apiResult['success'] ? 'sent' : 'failed';
         
         if ($apiResult['success']) {
@@ -153,7 +171,7 @@ if (isset($_POST['send_bulk_alerts'])) {
     }
 
     if ($successCount > 0) {
-        deductAgentMessages($agentId, $successCount);
+        deductAgentMessages($senderUserId, $successCount);
     }
     
     logActivity('Bulk WhatsApp Reminders', "Fired bulk alerts. Success: $successCount, Failed: $failedCount");
@@ -193,17 +211,13 @@ if (hasAgentAccess('pollution')) {
     $paramsExp[] = $agentId;
 }
 
-$partsExp[] = "
-    SELECT 'RC' as type, v.rc_expiry_date as expiry_date, v.vehicle_number, c.name as customer_name, c.mobile_number, c.id as customer_id, v.id as vehicle_id
-    FROM vehicles v
-    JOIN customers c ON v.customer_id = c.id
-    WHERE v.agent_id = ? AND v.rc_expiry_date < CURDATE()
-";
-$paramsExp[] = $agentId;
-
-$stmtExp = $db->prepare(implode(" UNION ALL ", $partsExp) . " ORDER BY expiry_date DESC");
-$stmtExp->execute($paramsExp);
-$expiredRecords = $stmtExp->fetchAll();
+if (count($partsExp) > 0) {
+    $stmtExp = $db->prepare(implode(" UNION ALL ", $partsExp) . " ORDER BY expiry_date DESC");
+    $stmtExp->execute($paramsExp);
+    $expiredRecords = $stmtExp->fetchAll();
+} else {
+    $expiredRecords = [];
+}
 
 // 2. Upcoming Renewals (next 30 days)
 $partsUp = [];
@@ -231,17 +245,13 @@ if (hasAgentAccess('pollution')) {
     $paramsUp[] = $agentId;
 }
 
-$partsUp[] = "
-    SELECT 'RC' as type, v.rc_expiry_date as expiry_date, v.vehicle_number, c.name as customer_name, c.mobile_number, c.id as customer_id, v.id as vehicle_id
-    FROM vehicles v
-    JOIN customers c ON v.customer_id = c.id
-    WHERE v.agent_id = ? AND v.rc_expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
-";
-$paramsUp[] = $agentId;
-
-$stmtUp = $db->prepare(implode(" UNION ALL ", $partsUp) . " ORDER BY expiry_date ASC");
-$stmtUp->execute($paramsUp);
-$upcomingRecords = $stmtUp->fetchAll();
+if (count($partsUp) > 0) {
+    $stmtUp = $db->prepare(implode(" UNION ALL ", $partsUp) . " ORDER BY expiry_date ASC");
+    $stmtUp->execute($paramsUp);
+    $upcomingRecords = $stmtUp->fetchAll();
+} else {
+    $upcomingRecords = [];
+}
 
 include_once __DIR__ . '/../includes/header.php';
 ?>

@@ -10,7 +10,8 @@ require_once __DIR__ . '/../includes/functions.php';
 checkAccess('agent');
 
 $db = getDBConnection();
-$agentId = $_SESSION['user_id'];
+$agentId = getEffectiveAgentId();
+$creatorShopId = $_SESSION['user_id'];
 
 $pageTitle = 'Manage Customers Directory';
 $activePage = 'customers';
@@ -100,10 +101,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 // --- CREATE OPERATION ---
                 $stmt = $db->prepare("
-                    INSERT INTO customers (agent_id, name, mobile_number, whatsapp_number, email, address, id_proof_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO customers (agent_id, created_by_shop_id, name, mobile_number, whatsapp_number, email, address, id_proof_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ");
-                $stmt->execute([$agentId, $name, $mobile, $whatsapp, $email, $address, $idProofPath]);
+                $stmt->execute([$agentId, $creatorShopId, $name, $mobile, $whatsapp, $email, $address, $idProofPath]);
                 
                 logActivity('Create Customer', "Created new customer: $name");
                 $_SESSION['alert_success'] = 'New customer enrolled successfully!';
@@ -112,6 +113,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (PDOException $e) {
             $error = 'Database error: ' . $e->getMessage();
         }
+    }
+}
+
+// C. Export Customers CSV
+if ($action === 'export_csv_customers') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=customers_' . date('Ymd_His') . '.csv');
+    $output = fopen('php://output', 'w');
+    fputcsv($output, ['name', 'mobile_number', 'whatsapp_number', 'email', 'address'], ',', '"', '\\');
+    
+    $stmt = $db->prepare("SELECT name, mobile_number, whatsapp_number, email, address FROM customers WHERE agent_id = ?");
+    $stmt->execute([$agentId]);
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        fputcsv($output, $row, ',', '"', '\\');
+    }
+    fclose($output);
+    exit;
+}
+
+// C2. Export Sample Customers CSV
+if ($action === 'export_sample_csv_customers') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=sample_customers.csv');
+    $output = fopen('php://output', 'w');
+    fputcsv($output, ['name', 'mobile_number', 'whatsapp_number', 'email', 'address'], ',', '"', '\\');
+    fputcsv($output, ['John Doe', '9876543210', '9876543210', 'john@example.com', '123 Main St, City'], ',', '"', '\\');
+    fputcsv($output, ['Jane Smith', '9123456789', '9123456789', '', '456 Oak Ave, City'], ',', '"', '\\');
+    fclose($output);
+    exit;
+}
+
+// D. Import Customers CSV
+if ($action === 'import_csv_customers' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        if (!isset($_FILES['csv_file']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('Please upload a valid CSV file.');
+        }
+        
+        $handle = fopen($_FILES['csv_file']['tmp_name'], 'r');
+        $headers = fgetcsv($handle, 0, ',', '"', '\\');
+        if (!$headers) throw new RuntimeException('Empty CSV file.');
+        
+        // Clean headers
+        $headers = array_map('trim', $headers);
+        $headers = array_map('strtolower', $headers);
+        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]); // Remove BOM
+        
+        $db->beginTransaction();
+        
+        $db->prepare("DELETE FROM customers WHERE agent_id = ?")->execute([$agentId]);
+        
+        $importedCount = 0;
+        
+        $stmtInsert = $db->prepare("
+            INSERT INTO customers (agent_id, name, mobile_number, whatsapp_number, email, address)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+        
+        while (($data = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
+            $row = array_combine($headers, array_pad($data, count($headers), ''));
+            
+            $name = trim($row['name'] ?? '');
+            $mobile = trim($row['mobile_number'] ?? '');
+            $whatsapp = trim($row['whatsapp_number'] ?? '');
+            $email = trim($row['email'] ?? '');
+            $address = trim($row['address'] ?? '');
+            
+            if (empty($name) || empty($mobile) || empty($whatsapp)) continue; // skip invalid rows
+            
+            $stmtInsert->execute([$agentId, $name, $mobile, $whatsapp, $email, $address]);
+            $importedCount++;
+        }
+        
+        fclose($handle);
+        $db->commit();
+        
+        logActivity('Import Customers', "Imported $importedCount customers via CSV");
+        $_SESSION['alert_success'] = "$importedCount customers imported successfully!";
+        redirect('customers.php');
+        
+    } catch (Exception $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        $error = $e->getMessage();
     }
 }
 
@@ -129,9 +213,14 @@ include_once __DIR__ . '/../includes/header.php';
                 <i class="fa-solid fa-users-viewfinder text-success fs-5"></i>
                 <h5 class="m-0 font-weight-700">Customers Directory</h5>
             </div>
-            <a href="customers.php?action=add" class="btn btn-success btn-sm">
-                <i class="fa-solid fa-plus"></i> Add Customer
-            </a>
+            <div class="d-flex gap-2">
+                <a href="customers.php?action=import_csv_customers" class="btn btn-light border btn-sm text-primary">
+                    <i class="fa-solid fa-file-csv me-1"></i> CSV Import
+                </a>
+                <a href="customers.php?action=add" class="btn btn-success btn-sm">
+                    <i class="fa-solid fa-plus"></i> Add Customer
+                </a>
+            </div>
         </div>
         <div class="card-body">
             
@@ -237,6 +326,7 @@ include_once __DIR__ . '/../includes/header.php';
                     confirmButtonText: 'Yes, delete customer!'
                 }).then((result) => {
                     if (result.isConfirmed) {
+                        $('#loader-wrapper').fadeIn(200);
                         window.location.href = url;
                     }
                 });
@@ -334,6 +424,57 @@ include_once __DIR__ . '/../includes/header.php';
                         </div>
                     </form>
                     
+                </div>
+            </div>
+        </div>
+    </div>
+<?php elseif ($action === 'import_csv_customers'): ?>
+    <div class="row justify-content-center">
+        <div class="col-12 col-md-8">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3 d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fa-solid fa-file-csv text-primary fs-5"></i>
+                        <h5 class="m-0 font-weight-700">Import Customers From CSV</h5>
+                    </div>
+                    <a href="customers.php" class="btn btn-light border btn-sm">
+                        <i class="fa-solid fa-arrow-left"></i> Back
+                    </a>
+                </div>
+                <div class="card-body">
+                    <?php if (!empty($error)): ?>
+                        <div class="alert alert-danger d-flex align-items-center gap-2 mb-4" role="alert" style="border-radius: 8px;">
+                            <i class="fa-solid fa-circle-exclamation fs-5"></i>
+                            <div class="small"><?php echo sanitize($error); ?></div>
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="alert alert-info bg-light border-info border-start border-4 border-0 mb-4 rounded-0">
+                        <h6 class="font-weight-700 text-info mb-2"><i class="fa-solid fa-circle-info me-1"></i> CSV Format Guide</h6>
+                        <p class="small mb-2">Please ensure your CSV file has the following columns in exactly this order (or with these headers):</p>
+                        <code class="d-block bg-white p-2 border rounded text-dark mb-3">name, mobile_number, whatsapp_number, email, address</code>
+                        <div class="d-flex gap-2">
+                            <a href="customers.php?action=export_csv_customers" class="btn btn-light border text-success btn-sm">
+                                <i class="fa-solid fa-download me-1"></i> Download Existing Data (CSV)
+                            </a>
+                            <a href="customers.php?action=export_sample_csv_customers" class="btn btn-light border text-primary btn-sm">
+                                <i class="fa-solid fa-file-csv me-1"></i> Download Sample CSV
+                            </a>
+                        </div>
+                    </div>
+
+                    <form action="customers.php?action=import_csv_customers" method="POST" enctype="multipart/form-data" onsubmit="return confirm('WARNING: Uploading this CSV will DELETE ALL your existing Customers and all of their associated Vehicles and Policies! Are you absolutely sure you want to proceed?');">
+                        <div class="mb-4">
+                            <label for="csv_file" class="form-label">CSV File <span class="text-danger">*</span></label>
+                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>
+                        </div>
+                        <div class="d-flex align-items-center justify-content-end gap-3">
+                            <a href="customers.php" class="btn btn-light border">Cancel</a>
+                            <button type="submit" class="btn btn-primary px-4">
+                                <i class="fa-solid fa-upload me-1"></i> Upload CSV
+                            </button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>

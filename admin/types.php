@@ -79,10 +79,7 @@ if ($action === 'edit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
     try {
-        // Check if there are vehicles referencing this type
-        $stmtCheck = $db->prepare("SELECT COUNT(*) FROM vehicles WHERE vehicle_type_id = ?");
-        $stmtCheck->execute([$id]);
-        $referenced = $stmtCheck->fetchColumn();
+        $referenced = 0;
         
         if ($referenced > 0) {
             $_SESSION['alert_error'] = 'Cannot delete! There are vehicles registered under this classification category.';
@@ -253,7 +250,8 @@ $(document).ready(function() {
             confirmButtonText: 'Yes, delete classification'
         }).then((result) => {
             if (result.isConfirmed) {
-                window.location.href = url;
+                $('#loader-wrapper').fadeIn(200);
+                        window.location.href = url;
             }
         });
     });

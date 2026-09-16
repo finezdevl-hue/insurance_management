@@ -14,7 +14,8 @@ if (!hasAgentAccess('vehicle') && !hasAgentAccess('pollution')) {
 }
 
 $db = getDBConnection();
-$agentId = $_SESSION['user_id'];
+$agentId = getEffectiveAgentId();
+$creatorShopId = $_SESSION['user_id'];
 
 $pageTitle = 'Vehicles & Owners Registry';
 $activePage = 'vehicles';
@@ -52,118 +53,67 @@ if ($action === 'save_vehicle' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $vehicleId = isset($_POST['id']) ? (int)$_POST['id'] : null;
     $custId = $_POST['customer_id'];
     
-    $vehNumber = strtoupper(trim($_POST['vehicle_number']));
-    $typeId = (int)$_POST['vehicle_type_id'];
-    $brand = trim($_POST['brand']);
-    $model = trim($_POST['model']);
-    $fuelType = $_POST['fuel_type'];
-    $regDate = $_POST['registration_date'];
-    $chassis = strtoupper(trim($_POST['chassis_number']));
-    $engine = strtoupper(trim($_POST['engine_number']));
-    $rcExpiry = $_POST['rc_expiry_date'];
+    $vehNumber = strtoupper(trim($_POST['vehicle_number'] ?? ''));
+    $ownerMobile = trim($_POST['owner_mobile'] ?? '');
+    $ownerName = trim($_POST['owner_name'] ?? '');
+    if (empty($ownerName)) {
+        $ownerName = 'Customer';
+    }
+    
+    $ownerWhatsapp = trim($_POST['owner_whatsapp'] ?? '');
+    if (empty($ownerWhatsapp)) {
+        $ownerWhatsapp = $ownerMobile;
+    }
+    
+    if (empty($vehNumber) || empty($ownerMobile)) {
+        throw new Exception('Vehicle Registration Number and Phone Number are required.');
+    }
     
     try {
         $db->beginTransaction();
         
-        // 1. Handle New Customer Creation on the fly
-        if ($custId === 'new') {
-            $newCustName = trim($_POST['new_customer_name'] ?? '');
-            $newCustMobile = trim($_POST['new_customer_mobile'] ?? '');
-            $newCustWhatsapp = trim($_POST['new_customer_whatsapp'] ?? '');
-            $newCustEmail = trim($_POST['new_customer_email'] ?? '');
-            $newCustAddress = trim($_POST['new_customer_address'] ?? '');
-            
-            if (empty($newCustName) || empty($newCustMobile)) {
-                throw new Exception('New customer name and mobile number are required.');
-            }
-            
-            // Upload ID Proof
-            $idProofPath = null;
-            if (isset($_FILES['new_customer_id_proof']) && $_FILES['new_customer_id_proof']['error'] === UPLOAD_ERR_OK) {
-                $uploadedProof = handleFileUpload($_FILES['new_customer_id_proof'], 'proofs', ['pdf', 'jpg', 'jpeg', 'png']);
-                if ($uploadedProof) {
-                    $idProofPath = $uploadedProof;
-                }
-            }
-            
-            // Insert customer
-            $stmtC = $db->prepare("
-                INSERT INTO customers (agent_id, name, mobile_number, whatsapp_number, email, address, id_proof_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ");
-            $stmtC->execute([
-                $agentId, $newCustName, $newCustMobile, 
-                $newCustWhatsapp ?: $newCustMobile, $newCustEmail, 
-                $newCustAddress, $idProofPath
-            ]);
+        // Find existing customer by mobile or create new customer automatically
+        $stmtC = $db->prepare("SELECT id FROM customers WHERE mobile_number = ? AND agent_id = ? LIMIT 1");
+        $stmtC->execute([$ownerMobile, $agentId]);
+        $existingCust = $stmtC->fetch();
+        
+        if ($existingCust) {
+            $custId = (int)$existingCust['id'];
+            $db->prepare("UPDATE customers SET name = ?, whatsapp_number = ? WHERE id = ?")->execute([$ownerName, $ownerWhatsapp, $custId]);
+        } else {
+            $stmtInstCust = $db->prepare("INSERT INTO customers (agent_id, created_by_shop_id, name, mobile_number, whatsapp_number) VALUES (?, ?, ?, ?, ?)");
+            $stmtInstCust->execute([$agentId, $creatorShopId, $ownerName, $ownerMobile, $ownerWhatsapp]);
             $custId = (int)$db->lastInsertId();
-            
-            logActivity('Create Customer', "Created customer on-the-fly: $newCustName (ID: $custId)");
-        } else {
-            $custId = (int)$custId;
         }
         
-        if (empty($custId) || empty($vehNumber) || empty($brand) || empty($model) || empty($rcExpiry)) {
-            throw new Exception('Please fill all required vehicle fields.');
-        }
+        // Check if vehicle number exists in the database
+        $stmtFind = $db->prepare("SELECT id, agent_id FROM vehicles WHERE vehicle_number = ? LIMIT 1");
+        $stmtFind->execute([$vehNumber]);
+        $existingVeh = $stmtFind->fetch();
         
-        // Check unique vehicle number excluding itself
-        if ($vehicleId) {
-            $stmtCheck = $db->prepare("SELECT COUNT(*) FROM vehicles WHERE vehicle_number = ? AND id != ?");
-            $stmtCheck->execute([$vehNumber, $vehicleId]);
-        } else {
-            $stmtCheck = $db->prepare("SELECT COUNT(*) FROM vehicles WHERE vehicle_number = ?");
-            $stmtCheck->execute([$vehNumber]);
-        }
-        
-        if ($stmtCheck->fetchColumn() > 0) {
-            throw new Exception("Vehicle number $vehNumber is already registered under another account.");
-        }
-        
-        // Vehicle Image Upload
-        $imagePath = null;
-        if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
-            $uploadedImg = handleFileUpload($_FILES['image'], 'vehicles', ['jpg', 'jpeg', 'png']);
-            if ($uploadedImg) {
-                $imagePath = $uploadedImg;
+        if ($existingVeh) {
+            // If vehicle belongs to a different Parent Agent agency network, block creation
+            if ((int)$existingVeh['agent_id'] !== (int)$agentId) {
+                throw new Exception("Vehicle number $vehNumber is already registered under a different agency account.");
             }
-        }
-        
-        // Save/Update Vehicle specifications
-        if ($vehicleId) {
-            $query = "
-                UPDATE vehicles 
-                SET customer_id = ?, vehicle_number = ?, vehicle_type_id = ?, brand = ?, model = ?, 
-                    fuel_type = ?, registration_date = ?, chassis_number = ?, engine_number = ?, rc_expiry_date = ?
-            ";
-            $params = [$custId, $vehNumber, $typeId, $brand, $model, $fuelType, $regDate, $chassis, $engine, $rcExpiry];
-            
-            if ($imagePath) {
-                $query .= ", image_path = ?";
-                $params[] = $imagePath;
-            }
-            
-            $query .= " WHERE id = ? AND agent_id = ?";
-            $params[] = $vehicleId;
-            $params[] = $agentId;
-            
-            $stmt = $db->prepare($query);
-            $stmt->execute($params);
-            $activeVehicleId = $vehicleId;
-            logActivity('Update Vehicle', "Updated vehicle: $vehNumber");
+            // If vehicle belongs to the SAME Parent Agent agency network, use existing vehicle ID
+            $activeVehicleId = (int)$existingVeh['id'];
+            $db->prepare("UPDATE vehicles SET customer_id = ?, created_by_shop_id = ? WHERE id = ? AND agent_id = ?")
+               ->execute([$custId, $creatorShopId, $activeVehicleId, $agentId]);
+            logActivity('Update Vehicle', "Updated existing agency vehicle record: $vehNumber (ID: $activeVehicleId)");
         } else {
-            $stmt = $db->prepare("
-                INSERT INTO vehicles (
-                    customer_id, agent_id, vehicle_number, vehicle_type_id, brand, model, 
-                    fuel_type, registration_date, chassis_number, engine_number, rc_expiry_date, image_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ");
-            $stmt->execute([
-                $custId, $agentId, $vehNumber, $typeId, $brand, $model,
-                $fuelType, $regDate, $chassis, $engine, $rcExpiry, $imagePath
-            ]);
-            $activeVehicleId = (int)$db->lastInsertId();
-            logActivity('Create Vehicle', "Created vehicle record: $vehNumber");
+            // New vehicle registration
+            if ($vehicleId) {
+                $stmt = $db->prepare("UPDATE vehicles SET customer_id = ?, vehicle_number = ? WHERE id = ? AND agent_id = ?");
+                $stmt->execute([$custId, $vehNumber, $vehicleId, $agentId]);
+                $activeVehicleId = $vehicleId;
+                logActivity('Update Vehicle', "Updated vehicle: $vehNumber");
+            } else {
+                $stmt = $db->prepare("INSERT INTO vehicles (customer_id, agent_id, created_by_shop_id, vehicle_number) VALUES (?, ?, ?, ?)");
+                $stmt->execute([$custId, $agentId, $creatorShopId, $vehNumber]);
+                $activeVehicleId = (int)$db->lastInsertId();
+                logActivity('Create Vehicle', "Created vehicle record: $vehNumber");
+            }
         }
         
         // 2. Handle Optional Insurance Policy fields
@@ -203,18 +153,21 @@ if ($action === 'save_vehicle' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare($query)->execute($params);
             } else {
                 $db->prepare("
-                    INSERT INTO insurances (vehicle_id, agent_id, insurance_company_id, policy_number, insurance_type, start_date, expiry_date, premium_amount, document_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ")->execute([$activeVehicleId, $agentId, $companyId, $policyNum, $insType, $insStartDate, $insExpiryDate, $premium, $docPath]);
+                    INSERT INTO insurances (vehicle_id, agent_id, created_by_shop_id, insurance_company_id, policy_number, insurance_type, start_date, expiry_date, premium_amount, document_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ")->execute([$activeVehicleId, $agentId, $creatorShopId, $companyId, $policyNum, $insType, $insStartDate, $insExpiryDate, $premium, $docPath]);
             }
             logActivity('Save Insurance', "Added/Updated insurance policy: $policyNum");
         }
         
         // 3. Handle Optional Pollution Certificate (PUC) fields
-        if (hasAgentAccess('pollution') && isset($_POST['certificate_number']) && !empty(trim($_POST['certificate_number']))) {
-            $certNum = trim($_POST['certificate_number']);
-            $pucStartDate = $_POST['puc_start_date'];
-            $pucExpiryDate = $_POST['puc_expiry_date'];
+        if (hasAgentAccess('pollution') && (!empty(trim($_POST['certificate_number'] ?? '')) || !empty($_POST['puc_start_date']) || !empty($_POST['puc_expiry_date']))) {
+            $certNum = trim($_POST['certificate_number'] ?? '');
+            if (empty($certNum)) {
+                $certNum = 'PUC-' . preg_replace('/[^A-Z0-9]/i', '', $vehNumber);
+            }
+            $pucStartDate = !empty($_POST['puc_start_date']) ? $_POST['puc_start_date'] : date('Y-m-d');
+            $pucExpiryDate = !empty($_POST['puc_expiry_date']) ? $_POST['puc_expiry_date'] : date('Y-m-d', strtotime('+6 months', strtotime($pucStartDate)));
             
             $docPath = null;
             if (isset($_FILES['puc_document']) && $_FILES['puc_document']['error'] === UPLOAD_ERR_OK) {
@@ -240,9 +193,9 @@ if ($action === 'save_vehicle' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare($query)->execute($params);
             } else {
                 $db->prepare("
-                    INSERT INTO pollution_certificates (vehicle_id, agent_id, certificate_number, start_date, expiry_date, document_path)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ")->execute([$activeVehicleId, $agentId, $certNum, $pucStartDate, $pucExpiryDate, $docPath]);
+                    INSERT INTO pollution_certificates (vehicle_id, agent_id, created_by_shop_id, certificate_number, start_date, expiry_date, document_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ")->execute([$activeVehicleId, $agentId, $creatorShopId, $certNum, $pucStartDate, $pucExpiryDate, $docPath]);
             }
             logActivity('Save Pollution', "Added/Updated pollution certificate: $certNum");
         }
@@ -266,8 +219,8 @@ if ($action === 'renew_puc' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $vehicleId = (int)($_POST['vehicle_id'] ?? 0);
     $certificateNumber = trim($_POST['certificate_number'] ?? '');
-    $pucStartDate = $_POST['puc_start_date'] ?? '';
-    $pucExpiryDate = $_POST['puc_expiry_date'] ?? '';
+    $pucStartDate = !empty($_POST['puc_start_date']) ? $_POST['puc_start_date'] : date('Y-m-d');
+    $pucExpiryDate = !empty($_POST['puc_expiry_date']) ? $_POST['puc_expiry_date'] : date('Y-m-d', strtotime('+6 months', strtotime($pucStartDate)));
 
     try {
         if ($vehicleId <= 0) {
@@ -312,9 +265,9 @@ if ($action === 'renew_puc' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->prepare($query)->execute($params);
         } else {
             $db->prepare("
-                INSERT INTO pollution_certificates (vehicle_id, agent_id, certificate_number, start_date, expiry_date, document_path)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ")->execute([$vehicleId, $agentId, $certificateNumber, $pucStartDate ?: null, $pucExpiryDate, $docPath]);
+                INSERT INTO pollution_certificates (vehicle_id, agent_id, created_by_shop_id, certificate_number, start_date, expiry_date, document_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ")->execute([$vehicleId, $agentId, $creatorShopId, $certificateNumber, $pucStartDate ?: null, $pucExpiryDate, $docPath]);
         }
 
         logActivity('Renew Pollution', "Saved pollution certificate for vehicle {$vehicle['vehicle_number']}.");
@@ -326,25 +279,40 @@ if ($action === 'renew_puc' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('vehicles.php');
 }
 
-// D. Import Vehicles CSV
-if ($action === 'import_csv_vehicles' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+
+
+// E. Import Pollution CSV
+if ($action === 'import_csv_pollution' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if (!isset($_FILES['csv_file']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
             throw new RuntimeException('Please upload a valid CSV file.');
         }
         $handle = fopen($_FILES['csv_file']['tmp_name'], 'r');
-        $headers = fgetcsv($handle);
+        $headers = fgetcsv($handle, 0, ',', '"', '\\');
         if (!$headers) throw new RuntimeException('Empty CSV file.');
         $headers = array_map('trim', $headers);
-        $req = ['customer_name', 'customer_mobile', 'vehicle_number', 'vehicle_type', 'brand', 'model', 'fuel_type', 'registration_date', 'rc_expiry_date'];
+        $headers = array_map('strtolower', $headers);
+        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+        
+        $req = ['customer_name', 'customer_mobile', 'vehicle_number', 'certificate_number', 'start_date', 'expiry_date'];
         foreach ($req as $r) {
             if (!in_array($r, $headers)) throw new RuntimeException("Missing column: $r");
         }
         $db->beginTransaction();
+        
+        $db->prepare("DELETE FROM pollution_certificates WHERE agent_id = ?")->execute([$agentId]);
+        
+        // Clean up orphaned vehicles (those that now have neither insurance nor pollution)
+        $db->prepare("
+            DELETE FROM vehicles 
+            WHERE agent_id = ? 
+            AND id NOT IN (SELECT vehicle_id FROM insurances WHERE agent_id = ?) 
+            AND id NOT IN (SELECT vehicle_id FROM pollution_certificates WHERE agent_id = ?)
+        ")->execute([$agentId, $agentId, $agentId]);
+        
         $imported = 0;
         $skipped = 0;
-        
-        while (($data = fgetcsv($handle)) !== false) {
+        while (($data = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
             if (!array_filter($data)) continue;
             $row = [];
             foreach ($headers as $index => $header) {
@@ -353,19 +321,15 @@ if ($action === 'import_csv_vehicles' && $_SERVER['REQUEST_METHOD'] === 'POST') 
             $custName = trim($row['customer_name'] ?? '');
             $custMobile = trim($row['customer_mobile'] ?? '');
             $vehNumber = strtoupper(trim($row['vehicle_number'] ?? ''));
-            $vehType = trim($row['vehicle_type'] ?? '');
-            $brand = trim($row['brand'] ?? '');
-            $model = trim($row['model'] ?? '');
-            $fuel = trim($row['fuel_type'] ?? '');
-            $regDate = trim($row['registration_date'] ?? '');
-            $rcExpiry = trim($row['rc_expiry_date'] ?? '');
+            $certNum = trim($row['certificate_number'] ?? '');
+            $startDate = trim($row['start_date'] ?? '');
+            $expiryDate = trim($row['expiry_date'] ?? '');
             
-            if (empty($custName) || empty($custMobile) || empty($vehNumber) || empty($vehType) || empty($rcExpiry)) {
+            if (empty($custName) || empty($custMobile) || empty($vehNumber) || empty($certNum) || empty($expiryDate)) {
                 $skipped++;
                 continue;
             }
             
-            // 1. Get/Create Customer
             $stmtC = $db->prepare("SELECT id FROM customers WHERE mobile_number = ? AND agent_id = ?");
             $stmtC->execute([$custMobile, $agentId]);
             $custId = $stmtC->fetchColumn();
@@ -375,29 +339,23 @@ if ($action === 'import_csv_vehicles' && $_SERVER['REQUEST_METHOD'] === 'POST') 
                 $custId = $db->lastInsertId();
             }
             
-            // 2. Get Vehicle Type
-            $stmtT = $db->prepare("SELECT id FROM vehicle_types WHERE name = ?");
-            $stmtT->execute([$vehType]);
-            $typeId = $stmtT->fetchColumn() ?: 1;
-            
-            // 3. Insert/Update Vehicle
-            $stmtV = $db->prepare("SELECT id FROM vehicles WHERE vehicle_number = ?");
-            $stmtV->execute([$vehNumber]);
+            $stmtV = $db->prepare("SELECT id FROM vehicles WHERE vehicle_number = ? AND agent_id = ?");
+            $stmtV->execute([$vehNumber, $agentId]);
             $vId = $stmtV->fetchColumn();
-            
-            if ($vId) {
-                $db->prepare("UPDATE vehicles SET customer_id=?, vehicle_type_id=?, brand=?, model=?, fuel_type=?, registration_date=?, rc_expiry_date=? WHERE id=? AND agent_id=?")
-                   ->execute([$custId, $typeId, $brand, $model, $fuel, $regDate ?: null, $rcExpiry, $vId, $agentId]);
-            } else {
-                $db->prepare("INSERT INTO vehicles (agent_id, customer_id, vehicle_number, vehicle_type_id, brand, model, fuel_type, registration_date, rc_expiry_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                   ->execute([$agentId, $custId, $vehNumber, $typeId, $brand, $model, $fuel, $regDate ?: null, $rcExpiry]);
+            if (!$vId) {
+                $db->prepare("INSERT INTO vehicles (agent_id, customer_id, created_by_shop_id, vehicle_number) VALUES (?, ?, ?, ?)")
+                   ->execute([$agentId, $custId, $creatorShopId, $vehNumber]);
+                $vId = $db->lastInsertId();
             }
+            
+            $db->prepare("INSERT INTO pollution_certificates (vehicle_id, agent_id, certificate_number, start_date, expiry_date) VALUES (?, ?, ?, ?, ?)")
+               ->execute([$vId, $agentId, $certNum, $startDate ?: null, $expiryDate]);
             $imported++;
         }
         fclose($handle);
         $db->commit();
-        $msg = "Imported/Updated $imported vehicles successfully.";
-        if ($skipped > 0) $msg .= " (Skipped $skipped rows due to missing required data).";
+        $msg = "Imported $imported Pollution Certificates successfully.";
+        if ($skipped > 0) $msg .= " (Skipped $skipped rows due to missing data).";
         $_SESSION['alert_success'] = $msg;
     } catch (Exception $e) {
         if ($db->inTransaction()) $db->rollBack();
@@ -406,62 +364,92 @@ if ($action === 'import_csv_vehicles' && $_SERVER['REQUEST_METHOD'] === 'POST') 
     redirect('vehicles.php');
 }
 
-// E. Import Pollution CSV
-if ($action === 'import_csv_pollution' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+// F. Import Insurance CSV
+if ($action === 'import_csv_insurance' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if (!isset($_FILES['csv_file']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
             throw new RuntimeException('Please upload a valid CSV file.');
         }
         $handle = fopen($_FILES['csv_file']['tmp_name'], 'r');
-        $headers = fgetcsv($handle);
+        $headers = fgetcsv($handle, 0, ',', '"', '\\');
         if (!$headers) throw new RuntimeException('Empty CSV file.');
         $headers = array_map('trim', $headers);
-        $req = ['vehicle_number', 'certificate_number', 'start_date', 'expiry_date'];
+        $headers = array_map('strtolower', $headers);
+        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+        
+        $req = ['customer_name', 'customer_mobile', 'vehicle_number', 'insurance_company', 'policy_number', 'insurance_type', 'start_date', 'expiry_date', 'premium_amount'];
         foreach ($req as $r) {
             if (!in_array($r, $headers)) throw new RuntimeException("Missing column: $r");
         }
         $db->beginTransaction();
+        
+        $db->prepare("DELETE FROM insurances WHERE agent_id = ?")->execute([$agentId]);
+        
+        // Clean up orphaned vehicles (those that now have neither insurance nor pollution)
+        $db->prepare("
+            DELETE FROM vehicles 
+            WHERE agent_id = ? 
+            AND id NOT IN (SELECT vehicle_id FROM insurances WHERE agent_id = ?) 
+            AND id NOT IN (SELECT vehicle_id FROM pollution_certificates WHERE agent_id = ?)
+        ")->execute([$agentId, $agentId, $agentId]);
+        
         $imported = 0;
         $skipped = 0;
-        
-        while (($data = fgetcsv($handle)) !== false) {
+        while (($data = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
             if (!array_filter($data)) continue;
             $row = [];
             foreach ($headers as $index => $header) {
                 $row[$header] = $data[$index] ?? '';
             }
+            $custName = trim($row['customer_name'] ?? '');
+            $custMobile = trim($row['customer_mobile'] ?? '');
             $vehNumber = strtoupper(trim($row['vehicle_number'] ?? ''));
-            $certNumber = trim($row['certificate_number'] ?? '');
-            $start = trim($row['start_date'] ?? '');
-            $expiry = trim($row['expiry_date'] ?? '');
+            $insComp = trim($row['insurance_company'] ?? '');
+            $policyNum = trim($row['policy_number'] ?? '');
+            $insType = trim($row['insurance_type'] ?? '');
+            $startDate = trim($row['start_date'] ?? '');
+            $expiryDate = trim($row['expiry_date'] ?? '');
+            $premium = (float)($row['premium_amount'] ?? 0);
             
-            if (empty($vehNumber) || empty($certNumber) || empty($expiry)) {
+            if (empty($custName) || empty($custMobile) || empty($vehNumber) || empty($policyNum) || empty($expiryDate) || empty($insComp)) {
                 $skipped++;
                 continue;
+            }
+            
+            $stmtC = $db->prepare("SELECT id FROM customers WHERE mobile_number = ? AND agent_id = ?");
+            $stmtC->execute([$custMobile, $agentId]);
+            $custId = $stmtC->fetchColumn();
+            if (!$custId) {
+                $db->prepare("INSERT INTO customers (agent_id, name, mobile_number, whatsapp_number) VALUES (?, ?, ?, ?)")
+                   ->execute([$agentId, $custName, $custMobile, $custMobile]);
+                $custId = $db->lastInsertId();
             }
             
             $stmtV = $db->prepare("SELECT id FROM vehicles WHERE vehicle_number = ? AND agent_id = ?");
             $stmtV->execute([$vehNumber, $agentId]);
             $vId = $stmtV->fetchColumn();
-            
-            if ($vId) {
-                $stmtP = $db->prepare("SELECT id FROM pollution_certificates WHERE vehicle_id = ?");
-                $stmtP->execute([$vId]);
-                $pId = $stmtP->fetchColumn();
-                if ($pId) {
-                    $db->prepare("UPDATE pollution_certificates SET certificate_number=?, start_date=?, expiry_date=? WHERE id=?")
-                       ->execute([$certNumber, $start ?: null, $expiry, $pId]);
-                } else {
-                    $db->prepare("INSERT INTO pollution_certificates (vehicle_id, agent_id, certificate_number, start_date, expiry_date) VALUES (?, ?, ?, ?, ?)")
-                       ->execute([$vId, $agentId, $certNumber, $start ?: null, $expiry]);
-                }
-                $imported++;
+            if (!$vId) {
+                $db->prepare("INSERT INTO vehicles (agent_id, customer_id, created_by_shop_id, vehicle_number) VALUES (?, ?, ?, ?)")
+                   ->execute([$agentId, $custId, $creatorShopId, $vehNumber]);
+                $vId = $db->lastInsertId();
             }
+            
+            $stmtComp = $db->prepare("SELECT id FROM insurance_companies WHERE name = ?");
+            $stmtComp->execute([$insComp]);
+            $cId = $stmtComp->fetchColumn();
+            if (!$cId) {
+                $db->prepare("INSERT INTO insurance_companies (name) VALUES (?)")->execute([$insComp]);
+                $cId = $db->lastInsertId();
+            }
+            
+            $db->prepare("INSERT INTO insurances (vehicle_id, agent_id, insurance_company_id, policy_number, insurance_type, start_date, expiry_date, premium_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+               ->execute([$vId, $agentId, $cId, $policyNum, $insType, $startDate ?: null, $expiryDate, $premium]);
+            $imported++;
         }
         fclose($handle);
         $db->commit();
-        $msg = "Imported/Updated $imported pollution records successfully.";
-        if ($skipped > 0) $msg .= " (Skipped $skipped rows due to missing required data).";
+        $msg = "Imported $imported Vehicle Insurances successfully.";
+        if ($skipped > 0) $msg .= " (Skipped $skipped rows).";
         $_SESSION['alert_success'] = $msg;
     } catch (Exception $e) {
         if ($db->inTransaction()) $db->rollBack();
@@ -470,44 +458,47 @@ if ($action === 'import_csv_pollution' && $_SERVER['REQUEST_METHOD'] === 'POST')
     redirect('vehicles.php');
 }
 
-// F. Export Vehicles CSV
-if ($action === 'export_csv_vehicles') {
+// G. Export CSVs
+
+
+if ($action === 'export_csv_pollution') {
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename=vehicles_' . date('Ymd_His') . '.csv');
+    header('Content-Disposition: attachment; filename=pollution_' . date('Ymd_His') . '.csv');
     $output = fopen('php://output', 'w');
-    fputcsv($output, ['customer_name', 'customer_mobile', 'vehicle_number', 'vehicle_type', 'brand', 'model', 'fuel_type', 'registration_date', 'rc_expiry_date']);
+    fputcsv($output, ['customer_name', 'customer_mobile', 'vehicle_number', 'certificate_number', 'start_date', 'expiry_date'], ',', '"', '\\');
     
     $stmt = $db->prepare("
-        SELECT c.name, c.mobile_number, v.vehicle_number, t.name as type, v.brand, v.model, v.fuel_type, v.registration_date, v.rc_expiry_date 
-        FROM vehicles v 
+        SELECT c.name, c.mobile_number, v.vehicle_number, p.certificate_number, p.start_date, p.expiry_date
+        FROM pollution_certificates p
+        JOIN vehicles v ON p.vehicle_id = v.id
         JOIN customers c ON v.customer_id = c.id 
-        JOIN vehicle_types t ON v.vehicle_type_id = t.id 
-        WHERE v.agent_id = ?
+        WHERE p.agent_id = ?
     ");
     $stmt->execute([$agentId]);
     while ($row = $stmt->fetch(PDO::FETCH_NUM)) {
-        fputcsv($output, $row);
+        fputcsv($output, $row, ',', '"', '\\');
     }
     fclose($output);
     exit;
 }
 
-// G. Export Pollution CSV
-if ($action === 'export_csv_pollution') {
+if ($action === 'export_csv_insurance') {
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename=pollution_' . date('Ymd_His') . '.csv');
+    header('Content-Disposition: attachment; filename=insurances_' . date('Ymd_His') . '.csv');
     $output = fopen('php://output', 'w');
-    fputcsv($output, ['vehicle_number', 'certificate_number', 'start_date', 'expiry_date']);
+    fputcsv($output, ['customer_name', 'customer_mobile', 'vehicle_number', 'insurance_company', 'policy_number', 'insurance_type', 'start_date', 'expiry_date', 'premium_amount'], ',', '"', '\\');
     
     $stmt = $db->prepare("
-        SELECT v.vehicle_number, p.certificate_number, p.start_date, p.expiry_date 
-        FROM pollution_certificates p 
-        JOIN vehicles v ON p.vehicle_id = v.id 
-        WHERE p.agent_id = ?
+        SELECT c.name, c.mobile_number, v.vehicle_number, ic.name as comp, i.policy_number, i.insurance_type, i.start_date, i.expiry_date, i.premium_amount
+        FROM insurances i
+        JOIN vehicles v ON i.vehicle_id = v.id
+        JOIN customers c ON v.customer_id = c.id 
+        JOIN insurance_companies ic ON i.insurance_company_id = ic.id
+        WHERE i.agent_id = ?
     ");
     $stmt->execute([$agentId]);
     while ($row = $stmt->fetch(PDO::FETCH_NUM)) {
-        fputcsv($output, $row);
+        fputcsv($output, $row, ',', '"', '\\');
     }
     fclose($output);
     exit;
@@ -526,9 +517,12 @@ include_once __DIR__ . '/../includes/header.php';
                 <h5 class="m-0 font-weight-700">Unified Vehicles Registry & Renewal Badges</h5>
             </div>
             <div class="d-flex align-items-center gap-2">
-                <a href="vehicles.php?action=import_csv_vehicles" class="btn btn-light border btn-sm text-primary">
-                    <i class="fa-solid fa-file-csv me-1"></i> CSV: Vehicles
+
+                <?php if (hasAgentAccess('vehicle')): ?>
+                <a href="vehicles.php?action=import_csv_insurance" class="btn btn-light border btn-sm text-warning">
+                    <i class="fa-solid fa-file-csv me-1"></i> CSV: Insurances
                 </a>
+                <?php endif; ?>
                 <?php if (hasAgentAccess('pollution')): ?>
                 <a href="vehicles.php?action=import_csv_pollution" class="btn btn-light border btn-sm text-info">
                     <i class="fa-solid fa-file-csv me-1"></i> CSV: Pollution
@@ -544,9 +538,9 @@ include_once __DIR__ . '/../includes/header.php';
             <table class="table table-hover align-middle datatable w-100">
                 <thead>
                     <tr>
-                        <th>Vehicle Details</th>
-                        <th>Owner Profile</th>
-                        <th>RC Expiry</th>
+                        <th>Vehicle Registration Number</th>
+                        <th>Owner Details</th>
+                        <th>Outlet Center</th>
                         <?php if (hasAgentAccess('vehicle')): ?>
                             <th>Insurance Cover</th>
                         <?php endif; ?>
@@ -560,15 +554,18 @@ include_once __DIR__ . '/../includes/header.php';
                     <?php
                     $stmt = $db->prepare("
                         SELECT 
-                            v.*, 
-                            vt.name as type_name,
+                            v.id,
+                            v.vehicle_number,
+                            v.created_at,
                             c.name as customer_name,
                             c.mobile_number as customer_mobile,
+                            c.whatsapp_number as customer_whatsapp,
                             i.policy_number, i.expiry_date as ins_expiry, ic.name as company_name,
-                            p.certificate_number, p.expiry_date as puc_expiry
+                            p.certificate_number, p.expiry_date as puc_expiry,
+                            sh.shop_name as creator_shop_name
                         FROM vehicles v
-                        JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
                         JOIN customers c ON v.customer_id = c.id
+                        LEFT JOIN users sh ON v.created_by_shop_id = sh.id
                         LEFT JOIN insurances i ON i.id = (
                             SELECT id FROM insurances WHERE vehicle_id = v.id ORDER BY expiry_date DESC LIMIT 1
                         )
@@ -582,40 +579,25 @@ include_once __DIR__ . '/../includes/header.php';
                     $stmt->execute([$agentId]);
                     
                     while ($vh = $stmt->fetch()):
-                        $rcStatus = getExpiryStatus($vh['rc_expiry_date']);
                         $insStatus = $vh['ins_expiry'] ? getExpiryStatus($vh['ins_expiry']) : null;
                         $pucStatus = $vh['puc_expiry'] ? getExpiryStatus($vh['puc_expiry']) : null;
                     ?>
                         <tr>
                             <td>
-                                <div class="d-flex align-items-center gap-3">
-                                    <?php if (!empty($vh['image_path'])): ?>
-                                        <img src="../uploads/vehicles/<?php echo $vh['image_path']; ?>" alt="Vehicle" class="img-thumbnail" style="width: 55px; height: 42px; object-fit: cover; border-radius: 4px;">
-                                    <?php else: ?>
-                                        <div class="bg-light d-flex align-items-center justify-content-center text-muted" style="width: 55px; height: 42px; border-radius: 4px; border: 1px dashed var(--border-color);">
-                                            <i class="fa-solid fa-car fs-5"></i>
-                                        </div>
-                                    <?php endif; ?>
-                                    <div>
-                                        <h6 class="m-0 font-weight-700 text-success"><?php echo sanitize($vh['vehicle_number']); ?></h6>
-                                        <span class="d-block small text-main font-weight-500"><?php echo sanitize($vh['brand'] . ' ' . $vh['model']); ?></span>
-                                        <span class="text-muted small" style="font-size: 0.72rem;">
-                                            Type: <?php echo sanitize($vh['type_name']); ?> | Fuel: <?php echo sanitize($vh['fuel_type']); ?>
-                                        </span>
-                                    </div>
-                                </div>
+                                <h6 class="m-0 font-weight-700 text-success fs-6"><?php echo sanitize($vh['vehicle_number']); ?></h6>
                             </td>
                             <td>
                                 <strong class="small text-main d-block"><?php echo sanitize($vh['customer_name']); ?></strong>
                                 <small class="text-muted" style="font-size: 0.75rem;"><i class="fa-solid fa-phone"></i> <?php echo sanitize($vh['customer_mobile']); ?></small>
                             </td>
                             <td>
-                                <span class="badge <?php echo $rcStatus['badge']; ?> mb-1">
-                                    <?php echo sanitize($rcStatus['text']); ?>
-                                </span>
-                                <small class="d-block text-muted" style="font-size: 0.72rem;">
-                                    Date: <?php echo date('d-M-Y', strtotime($vh['rc_expiry_date'])); ?>
-                                </small>
+                                <?php if (!empty($vh['creator_shop_name'])): ?>
+                                    <span class="badge bg-light text-secondary border" style="font-size: 0.75rem;" title="Added by Shop Center">
+                                        <i class="fa-solid fa-store me-1"></i><?php echo sanitize($vh['creator_shop_name']); ?>
+                                    </span>
+                                <?php else: ?>
+                                    <span class="text-muted small">-</span>
+                                <?php endif; ?>
                             </td>
                             <?php if (hasAgentAccess('vehicle')): ?>
                             <td>
@@ -696,6 +678,7 @@ include_once __DIR__ . '/../includes/header.php';
                     confirmButtonText: 'Yes, delete it!'
                 }).then((result) => {
                     if (result.isConfirmed) {
+                        $('#loader-wrapper').fadeIn(200);
                         window.location.href = url;
                     }
                 });
@@ -762,7 +745,7 @@ include_once __DIR__ . '/../includes/header.php';
                             </div>
                             <div class="col-12 col-md-4">
                                 <label for="puc_start_date" class="form-label">PUC Issue Date</label>
-                                <input type="date" class="form-control" id="puc_start_date" name="puc_start_date" value="<?php echo sanitize($puc['start_date'] ?? ''); ?>">
+                                <input type="date" class="form-control" id="puc_start_date" name="puc_start_date" value="<?php echo !empty($puc['start_date']) ? sanitize($puc['start_date']) : date('Y-m-d'); ?>">
                             </div>
                             <div class="col-12 col-md-4">
                                 <label for="puc_expiry_date" class="form-label">PUC Expiry Date <span class="text-danger">*</span></label>
@@ -797,7 +780,7 @@ include_once __DIR__ . '/../includes/header.php';
     
     if ($isEdit) {
         $vehicleId = (int)$_GET['id'];
-        $stmt = $db->prepare("SELECT * FROM vehicles WHERE id = ? AND agent_id = ?");
+        $stmt = $db->prepare("SELECT v.*, c.name as customer_name, c.mobile_number as customer_mobile FROM vehicles v LEFT JOIN customers c ON v.customer_id = c.id WHERE v.id = ? AND v.agent_id = ?");
         $stmt->execute([$vehicleId, $agentId]);
         $vh = $stmt->fetch();
         if (!$vh) {
@@ -820,7 +803,11 @@ include_once __DIR__ . '/../includes/header.php';
     $customers = $stmtCust->fetchAll();
     
     // Fetch active vehicle types & insurance companies
-    $types = $db->query("SELECT id, name FROM vehicle_types WHERE status = 'active' ORDER BY name ASC")->fetchAll();
+    try {
+        $types = $db->query("SELECT id, name FROM vehicle_types WHERE status = 'active' ORDER BY name ASC")->fetchAll();
+    } catch (PDOException $e) {
+        $types = [];
+    }
     $companies = $db->query("SELECT id, name FROM insurance_companies WHERE status = 'active' ORDER BY name ASC")->fetchAll();
 ?>
 
@@ -843,121 +830,20 @@ include_once __DIR__ . '/../includes/header.php';
                             <input type="hidden" name="id" value="<?php echo $vh['id']; ?>">
                         <?php endif; ?>
 
-                        <!-- Section 1: Customer Allocation -->
-                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-success"><i class="fa-solid fa-user me-2"></i>1. Customer/Owner Allocation</h6>
-                        <div class="row g-3 mb-4">
-                            <div class="col-12 col-md-6">
-                                <label for="customer_id" class="form-label">Allocate Vehicle Owner <span class="text-danger">*</span></label>
-                                <select class="form-select" id="customer_id" name="customer_id" required>
-                                    <option value="" disabled selected>-- Select Registered Owner --</option>
-                                    <option value="new" class="text-success font-weight-700">+ [ Register a New Owner on the fly ]</option>
-                                    <?php foreach ($customers as $c): ?>
-                                        <option value="<?php echo $c['id']; ?>" <?php echo (isset($vh['customer_id']) && $vh['customer_id'] == $c['id']) ? 'selected' : ''; ?>>
-                                            <?php echo sanitize($c['name']); ?> (Mob: <?php echo sanitize($c['mobile_number']); ?>)
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            
-                            <div class="col-12 col-md-6">
-                                <label for="vehicle_type_id" class="form-label">Vehicle Classification <span class="text-danger">*</span></label>
-                                <select class="form-select" id="vehicle_type_id" name="vehicle_type_id" required>
-                                    <option value="" disabled selected>-- Choose Category --</option>
-                                    <?php foreach ($types as $t): ?>
-                                        <option value="<?php echo $t['id']; ?>" <?php echo (isset($vh['vehicle_type_id']) && $vh['vehicle_type_id'] == $t['id']) ? 'selected' : ''; ?>>
-                                            <?php echo sanitize($t['name']); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                        </div>
-
-                        <!-- On-the-fly Customer Creation Panel (Collapsible) -->
-                        <div id="new_customer_panel" class="card bg-light border-success border-opacity-25 mb-4 d-none">
-                            <div class="card-body">
-                                <h6 class="font-weight-600 text-success mb-3"><i class="fa-solid fa-user-plus me-1"></i> Register New Customer Profile</h6>
-                                <div class="row g-3">
-                                    <div class="col-12 col-md-4">
-                                        <label for="new_customer_name" class="form-label small">Owner's Full Name <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control form-control-sm" id="new_customer_name" name="new_customer_name" placeholder="e.g. John Doe">
-                                    </div>
-                                    <div class="col-12 col-md-4">
-                                        <label for="new_customer_mobile" class="form-label small">Mobile Number <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control form-control-sm" id="new_customer_mobile" name="new_customer_mobile" placeholder="e.g. 9876543210">
-                                    </div>
-                                    <div class="col-12 col-md-4">
-                                        <label for="new_customer_whatsapp" class="form-label small">WhatsApp Number <span class="text-muted">(Optional)</span></label>
-                                        <input type="text" class="form-control form-control-sm" id="new_customer_whatsapp" name="new_customer_whatsapp" placeholder="e.g. 9876543210">
-                                    </div>
-                                    <div class="col-12 col-md-6">
-                                        <label for="new_customer_email" class="form-label small">Email Address <span class="text-muted">(Optional)</span></label>
-                                        <input type="email" class="form-control form-control-sm" id="new_customer_email" name="new_customer_email" placeholder="e.g. email@example.com">
-                                    </div>
-                                    <div class="col-12 col-md-6">
-                                        <label for="new_customer_id_proof" class="form-label small">Upload ID Proof Document <span class="text-muted small">(PDF/Image)</span></label>
-                                        <input type="file" class="form-control form-control-sm" id="new_customer_id_proof" name="new_customer_id_proof">
-                                    </div>
-                                    <div class="col-12">
-                                        <label for="new_customer_address" class="form-label small">Residential Address</label>
-                                        <textarea class="form-control form-control-sm" id="new_customer_address" name="new_customer_address" rows="2" placeholder="Owner residential address details..."></textarea>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Section 2: Vehicle Specifications -->
-                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-success"><i class="fa-solid fa-car-side me-2"></i>2. Vehicle Specifications</h6>
+                        <!-- Section 1: Required & Basic Details -->
+                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-success"><i class="fa-solid fa-car me-2"></i>1. Vehicle & Owner Details</h6>
                         <div class="row g-3 mb-4">
                             <div class="col-12 col-md-4">
-                                <label for="vehicle_number" class="form-label">Vehicle Registration Number <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="vehicle_number" name="vehicle_number" required value="<?php echo $isEdit ? sanitize($vh['vehicle_number']) : ''; ?>" placeholder="e.g. MH02AB1234">
+                                <label for="vehicle_number" class="form-label font-weight-600">Vehicle Registration Number <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="vehicle_number" name="vehicle_number" required value="<?php echo ($isEdit && isset($vh['vehicle_number'])) ? sanitize($vh['vehicle_number']) : ''; ?>" placeholder="e.g. MH02AB1234">
                             </div>
                             <div class="col-12 col-md-4">
-                                <label for="brand" class="form-label">Manufacturer Brand <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="brand" name="brand" required value="<?php echo $isEdit ? sanitize($vh['brand']) : ''; ?>" placeholder="e.g. Hyundai">
+                                <label for="owner_mobile" class="form-label font-weight-600">Phone Number <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="owner_mobile" name="owner_mobile" required value="<?php echo ($isEdit && isset($vh['customer_mobile'])) ? sanitize($vh['customer_mobile']) : ''; ?>" placeholder="e.g. 9876543210">
                             </div>
                             <div class="col-12 col-md-4">
-                                <label for="model" class="form-label">Model <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="model" name="model" required value="<?php echo $isEdit ? sanitize($vh['model']) : ''; ?>" placeholder="e.g. Creta">
-                            </div>
-                            
-                            <div class="col-12 col-md-4">
-                                <label for="fuel_type" class="form-label">Fuel Type</label>
-                                <select class="form-select" id="fuel_type" name="fuel_type">
-                                    <option value="Petrol" <?php echo (isset($vh['fuel_type']) && $vh['fuel_type'] === 'Petrol') ? 'selected' : ''; ?>>Petrol</option>
-                                    <option value="Diesel" <?php echo (isset($vh['fuel_type']) && $vh['fuel_type'] === 'Diesel') ? 'selected' : ''; ?>>Diesel</option>
-                                    <option value="CNG" <?php echo (isset($vh['fuel_type']) && $vh['fuel_type'] === 'CNG') ? 'selected' : ''; ?>>CNG</option>
-                                    <option value="LPG" <?php echo (isset($vh['fuel_type']) && $vh['fuel_type'] === 'LPG') ? 'selected' : ''; ?>>LPG</option>
-                                    <option value="Electric" <?php echo (isset($vh['fuel_type']) && $vh['fuel_type'] === 'Electric') ? 'selected' : ''; ?>>Electric</option>
-                                    <option value="Hybrid" <?php echo (isset($vh['fuel_type']) && $vh['fuel_type'] === 'Hybrid') ? 'selected' : ''; ?>>Hybrid</option>
-                                </select>
-                            </div>
-                            
-                            <div class="col-12 col-md-4">
-                                <label for="registration_date" class="form-label">Registration Date</label>
-                                <input type="date" class="form-control" id="registration_date" name="registration_date" value="<?php echo $isEdit ? $vh['registration_date'] : ''; ?>">
-                            </div>
-                            
-                            <div class="col-12 col-md-4">
-                                <label for="rc_expiry_date" class="form-label">Registration Certificate (RC) Expiry <span class="text-danger">*</span></label>
-                                <input type="date" class="form-control" id="rc_expiry_date" name="rc_expiry_date" required value="<?php echo $isEdit ? $vh['rc_expiry_date'] : ''; ?>">
-                            </div>
-                        </div>
-
-                        <!-- Section 3: Technical Specs -->
-                        <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-success"><i class="fa-solid fa-gears me-2"></i>3. Technical Specifications & Photo</h6>
-                        <div class="row g-3 mb-4">
-                            <div class="col-12 col-md-4">
-                                <label for="chassis_number" class="form-label">Chassis Number</label>
-                                <input type="text" class="form-control" id="chassis_number" name="chassis_number" value="<?php echo $isEdit ? sanitize($vh['chassis_number']) : ''; ?>" placeholder="Chassis details">
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label for="engine_number" class="form-label">Engine Number</label>
-                                <input type="text" class="form-control" id="engine_number" name="engine_number" value="<?php echo $isEdit ? sanitize($vh['engine_number']) : ''; ?>" placeholder="Engine details">
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label for="image" class="form-label">Upload Vehicle Image <span class="text-muted small">(PNG/JPG)</span></label>
-                                <input type="file" class="form-control" id="image" name="image">
+                                <label for="owner_name" class="form-label font-weight-600">Owner Name <span class="text-muted small font-normal">(Optional)</span></label>
+                                <input type="text" class="form-control" id="owner_name" name="owner_name" value="<?php echo ($isEdit && isset($vh['customer_name']) && $vh['customer_name'] !== 'Customer') ? sanitize($vh['customer_name']) : ''; ?>" placeholder="e.g. Rahul Sharma (Optional)">
                             </div>
                         </div>
 
@@ -1024,7 +910,7 @@ include_once __DIR__ . '/../includes/header.php';
                                 </div>
                                 <div class="col-12 col-md-4">
                                     <label for="puc_start_date" class="form-label">PUC Issue Date</label>
-                                    <input type="date" class="form-control" id="puc_start_date" name="puc_start_date" value="<?php echo $puc['start_date'] ?? ''; ?>">
+                                    <input type="date" class="form-control" id="puc_start_date" name="puc_start_date" value="<?php echo !empty($puc['start_date']) ? sanitize($puc['start_date']) : date('Y-m-d'); ?>">
                                 </div>
                                 <div class="col-12 col-md-4">
                                     <label for="puc_expiry_date" class="form-label">PUC Expiry Date</label>
@@ -1072,6 +958,37 @@ include_once __DIR__ . '/../includes/header.php';
                 toggleNewCustomerFields();
             });
             toggleNewCustomerFields();
+
+            // Auto-calculate PUC Expiry Date (+6 Months from Issue Date)
+            function autoCalcPucExpiry() {
+                var startVal = $('#puc_start_date').val();
+                if (startVal && startVal.indexOf('-') !== -1) {
+                    var parts = startVal.split('-');
+                    var year = parseInt(parts[0], 10);
+                    var month = parseInt(parts[1], 10) - 1;
+                    var day = parseInt(parts[2], 10);
+                    
+                    var dt = new Date(year, month + 6, day);
+                    var yyyy = dt.getFullYear();
+                    var mm = String(dt.getMonth() + 1).padStart(2, '0');
+                    var dd = String(dt.getDate()).padStart(2, '0');
+                    $('#puc_expiry_date').val(yyyy + '-' + mm + '-' + dd);
+                }
+            }
+
+            $(document).on('change keyup input blur', '#puc_start_date', function() {
+                autoCalcPucExpiry();
+            });
+
+            // Default start & expiry date on new form if empty
+            if ($('#puc_start_date').length && !$('#puc_start_date').val() && !$('#puc_expiry_date').val()) {
+                var today = new Date();
+                var yyyy = today.getFullYear();
+                var mm = String(today.getMonth() + 1).padStart(2, '0');
+                var dd = String(today.getDate()).padStart(2, '0');
+                $('#puc_start_date').val(yyyy + '-' + mm + '-' + dd);
+                autoCalcPucExpiry();
+            }
         });
     </script>
 
@@ -1082,12 +999,11 @@ include_once __DIR__ . '/../includes/header.php';
     $stmtVH = $db->prepare("
         SELECT 
             v.*, 
-            vt.name as type_name,
+            'Vehicle' as type_name,
             c.name as customer_name, c.mobile_number as customer_mobile, c.email as customer_email, c.address as customer_address,
             i.policy_number, i.expiry_date as ins_expiry, ic.name as company_name, i.insurance_type, i.premium_amount,
             p.certificate_number, p.expiry_date as puc_expiry
         FROM vehicles v
-        JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
         JOIN customers c ON v.customer_id = c.id
         LEFT JOIN insurances i ON i.vehicle_id = v.id
         LEFT JOIN insurance_companies ic ON i.insurance_company_id = ic.id
@@ -1169,10 +1085,7 @@ include_once __DIR__ . '/../includes/header.php';
             <div class="col-6">
                 <h6 class="font-weight-600 text-success mb-2"><i class="fa-solid fa-car me-1"></i> Vehicle Profile</h6>
                 <table class="table table-sm table-borderless small">
-                    <tr><td class="text-muted" style="width: 110px;">Vehicle Number:</td><td><strong class="text-primary"><?php echo sanitize($vh['vehicle_number']); ?></strong></td></tr>
-                    <tr><td class="text-muted">Manufacturer:</td><td><?php echo sanitize($vh['brand'] . ' ' . $vh['model']); ?></td></tr>
-                    <tr><td class="text-muted">Fuel Type:</td><td><?php echo sanitize($vh['fuel_type']); ?></td></tr>
-                    <tr><td class="text-muted">RC Expiry:</td><td><strong class="text-danger"><?php echo date('d-M-Y', strtotime($vh['rc_expiry_date'])); ?></strong></td></tr>
+                    <tr><td class="text-muted" style="width: 130px;">Vehicle Number:</td><td><strong class="text-primary fs-6"><?php echo sanitize($vh['vehicle_number']); ?></strong></td></tr>
                 </table>
             </div>
         </div>
@@ -1212,15 +1125,14 @@ include_once __DIR__ . '/../includes/header.php';
             <p class="m-0" style="font-size: 0.7rem;">Generated on <?php echo date('d-M-Y H:i A'); ?>. System Managed by Vehicle Care.</p>
         </div>
     </div>
-
-<?php elseif ($action === 'import_csv_vehicles' || $action === 'import_csv_pollution'): ?>
+<?php elseif ($action === 'import_csv_pollution' || $action === 'import_csv_insurance'): ?>
     <div class="row justify-content-center">
         <div class="col-12 col-xl-8">
             <div class="card shadow-sm border-0">
                 <div class="card-header bg-white py-3 d-flex align-items-center justify-content-between">
                     <div class="d-flex align-items-center gap-2">
                         <i class="fa-solid fa-file-csv text-primary fs-5"></i>
-                        <h5 class="m-0 font-weight-700">Import <?php echo $action === 'import_csv_vehicles' ? 'Vehicles' : 'Pollution Certificates'; ?> From CSV</h5>
+                        <h5 class="m-0 font-weight-700">Import <?php echo ($action === 'import_csv_pollution' ? 'Pollution Certificates' : 'Vehicle Insurances'); ?> From CSV</h5>
                     </div>
                     <a href="vehicles.php" class="btn btn-light border btn-sm">
                         <i class="fa-solid fa-arrow-left"></i> Back to List
@@ -1230,22 +1142,22 @@ include_once __DIR__ . '/../includes/header.php';
                     <div class="alert alert-info border-0 d-flex align-items-start gap-3" style="border-radius: 10px;">
                         <i class="fa-solid fa-circle-info mt-1"></i>
                         <div class="small">
-                            <?php if ($action === 'import_csv_vehicles'): ?>
-                                <strong>Required columns:</strong> <code>customer_name</code>, <code>customer_mobile</code>, <code>vehicle_number</code>, <code>vehicle_type</code>, <code>brand</code>, <code>model</code>, <code>fuel_type</code>, <code>registration_date</code>, <code>rc_expiry_date</code>.
+                            <?php if ($action === 'import_csv_pollution'): ?>
+                                <strong>Required columns:</strong> <code>customer_name</code>, <code>customer_mobile</code>, <code>vehicle_number</code>, <code>certificate_number</code>, <code>start_date</code>, <code>expiry_date</code>.
                             <?php else: ?>
-                                <strong>Required columns:</strong> <code>vehicle_number</code>, <code>certificate_number</code>, <code>start_date</code>, <code>expiry_date</code>.
+                                <strong>Required columns:</strong> <code>customer_name</code>, <code>customer_mobile</code>, <code>vehicle_number</code>, <code>insurance_company</code>, <code>policy_number</code>, <code>insurance_type</code>, <code>start_date</code>, <code>expiry_date</code>, <code>premium_amount</code>.
                             <?php endif; ?>
-                            <br>The system will automatically link or update records based on the Vehicle Number.
+                            <br>The system will automatically link or create records based on the Vehicle Number and Mobile Number.
                         </div>
                     </div>
 
                     <div class="mb-4 d-flex align-items-center gap-2">
-                        <a href="vehicles.php?action=<?php echo $action === 'import_csv_vehicles' ? 'export_csv_vehicles' : 'export_csv_pollution'; ?>" class="btn btn-light border text-success">
+                        <a href="vehicles.php?action=<?php echo ($action === 'import_csv_pollution' ? 'export_csv_pollution' : 'export_csv_insurance'); ?>" class="btn btn-light border text-success">
                             <i class="fa-solid fa-download me-1"></i> Download Existing Data (CSV)
                         </a>
                     </div>
 
-                    <form action="vehicles.php?action=<?php echo $action; ?>" method="POST" enctype="multipart/form-data">
+                    <form action="vehicles.php?action=<?php echo $action; ?>" method="POST" enctype="multipart/form-data" onsubmit="return confirm('WARNING: Uploading this CSV will DELETE ALL your existing <?php echo ($action === 'import_csv_pollution' ? 'Pollution Certificates' : 'Vehicle Insurances'); ?>. Are you absolutely sure you want to proceed?');">
                         <div class="mb-3">
                             <label for="csv_file" class="form-label">CSV File <span class="text-danger">*</span></label>
                             <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>
@@ -1261,7 +1173,6 @@ include_once __DIR__ . '/../includes/header.php';
             </div>
         </div>
     </div>
-
 <?php endif; ?>
 
 <?php include_once __DIR__ . '/../includes/footer.php'; ?>

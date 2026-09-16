@@ -43,6 +43,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $panNumber = trim($_POST['pan_number']);
     $businessType = trim($_POST['business_type']);
     
+    // Notification Settings
+    $notifyDaysBefore = max(2, (int)($_POST['notify_days_before'] ?? 7));
+    $notifyBeforeEnabled = isset($_POST['notify_before_enabled']) ? 1 : 0;
+    $notify1DayBeforeEnabled = isset($_POST['notify_1day_before_enabled']) ? 1 : 0;
+    $notifyAfterExpiryEnabled = isset($_POST['notify_after_expiry_enabled']) ? 1 : 0;
+    
     // Core parameters (email cannot be modified if we want to restrict it or we can allow updating)
     $email = trim($_POST['email']);
     
@@ -80,12 +86,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     UPDATE users 
                     SET email = ?, shop_name = ?, shop_owner_name = ?, shop_address = ?, 
                         city = ?, state = ?, pincode = ?, mobile_number = ?, whatsapp_number = ?, 
-                        gst_number = ?, license_number = ?, pan_number = ?, business_type = ?
+                        gst_number = ?, license_number = ?, pan_number = ?, business_type = ?,
+                        notify_days_before = ?, notify_before_enabled = ?, notify_1day_before_enabled = ?, notify_after_expiry_enabled = ?
                 ";
                 $params = [
                     $email, $shopName, $shopOwnerName, $shopAddress, 
                     $city, $state, $pincode, $mobileNumber, $whatsappNumber, 
-                    $gstNumber, $licenseNumber, $panNumber, $businessType
+                    $gstNumber, $licenseNumber, $panNumber, $businessType,
+                    $notifyDaysBefore, $notifyBeforeEnabled, $notify1DayBeforeEnabled, $notifyAfterExpiryEnabled
                 ];
                 
                 if ($shopLogo) {
@@ -130,22 +138,22 @@ include_once __DIR__ . '/../includes/header.php';
         <!-- Premium Branding Banner -->
         <div class="card shadow-sm border-0 mb-4 overflow-hidden position-relative" style="border-radius: var(--radius-md);">
             <div style="height: 180px; width: 100%; background: linear-gradient(135deg, #10b981 0%, #059669 100%); position: relative;">
-                <?php if ($agent['shop_banner'] && file_exists(__DIR__ . '/../uploads/banners/' . $agent['shop_banner'])): ?>
-                    <img src="../uploads/banners/<?php echo $agent['shop_banner']; ?>" alt="Banner" style="width: 100%; height: 100%; object-fit: cover; opacity: 0.65;">
+                <?php if (!empty($agent['shop_banner']) && file_exists(__DIR__ . '/../uploads/banners/' . $agent['shop_banner'])): ?>
+                    <img src="../uploads/banners/<?php echo sanitize($agent['shop_banner']); ?>" alt="Banner" style="width: 100%; height: 100%; object-fit: cover; opacity: 0.65;">
                 <?php endif; ?>
                 <div class="position-absolute bottom-0 start-0 p-4 d-flex align-items-end gap-3 text-white">
                     <div class="bg-white p-1" style="border-radius: var(--radius-sm); box-shadow: var(--shadow-md);">
-                        <?php if ($agent['shop_logo'] && file_exists(__DIR__ . '/../uploads/logos/' . $agent['shop_logo'])): ?>
-                            <img src="../uploads/logos/<?php echo $agent['shop_logo']; ?>" alt="Logo" style="width: 90px; height: 90px; object-fit: cover; border-radius: var(--radius-sm);">
+                        <?php if (!empty($agent['shop_logo']) && file_exists(__DIR__ . '/../uploads/logos/' . $agent['shop_logo'])): ?>
+                            <img src="../uploads/logos/<?php echo sanitize($agent['shop_logo']); ?>" alt="Logo" style="width: 90px; height: 90px; object-fit: cover; border-radius: var(--radius-sm);">
                         <?php else: ?>
                             <div class="bg-light text-primary d-flex align-items-center justify-content-center font-weight-700 fs-2 text-uppercase" style="width: 90px; height: 90px; border-radius: var(--radius-sm);">
-                                <?php echo substr(sanitize($agent['shop_name']), 0, 2); ?>
+                                <?php echo substr(sanitize($agent['shop_name'] ?? $agent['username'] ?? 'AG'), 0, 2); ?>
                             </div>
                         <?php endif; ?>
                     </div>
                     <div>
-                        <h4 class="m-0 font-weight-700"><?php echo sanitize($agent['shop_name']); ?></h4>
-                        <p class="m-0 small opacity-90"><i class="fa-solid fa-user-tie me-1"></i> Owner: <?php echo sanitize($agent['shop_owner_name'] ?: 'Not Specified'); ?></p>
+                        <h4 class="m-0 font-weight-700"><?php echo sanitize($agent['shop_name'] ?? $agent['username']); ?></h4>
+                        <p class="m-0 small opacity-90"><i class="fa-solid fa-user-tie me-1"></i> Owner: <?php echo sanitize($agent['shop_owner_name'] ?? 'Not Specified'); ?></p>
                     </div>
                 </div>
             </div>
@@ -175,11 +183,11 @@ include_once __DIR__ . '/../includes/header.php';
                     <div class="row g-3 mb-4">
                         <div class="col-12 col-md-4">
                             <label for="username" class="form-label">Username <span class="text-muted small">(Read Only)</span></label>
-                            <input type="text" class="form-control bg-light" id="username" readonly value="<?php echo sanitize($agent['username']); ?>">
+                            <input type="text" class="form-control bg-light" id="username" readonly value="<?php echo sanitize($agent['username'] ?? ''); ?>">
                         </div>
                         <div class="col-12 col-md-4">
                             <label for="email" class="form-label">Email Address <span class="text-danger">*</span></label>
-                            <input type="email" class="form-control" id="email" name="email" required value="<?php echo sanitize($agent['email']); ?>">
+                            <input type="email" class="form-control" id="email" name="email" required value="<?php echo sanitize($agent['email'] ?? ''); ?>">
                         </div>
                         <div class="col-12 col-md-4">
                             <label for="password" class="form-label">Change Password <span class="text-muted small">(Leave empty to keep current)</span></label>
@@ -192,59 +200,59 @@ include_once __DIR__ . '/../includes/header.php';
                     <div class="row g-3 mb-4">
                         <div class="col-12 col-md-6">
                             <label for="shop_name" class="form-label">Agency / Shop Name <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="shop_name" name="shop_name" required value="<?php echo sanitize($agent['shop_name']); ?>">
+                            <input type="text" class="form-control" id="shop_name" name="shop_name" required value="<?php echo sanitize($agent['shop_name'] ?? ''); ?>">
                         </div>
                         <div class="col-12 col-md-6">
                             <label for="shop_owner_name" class="form-label">Owner Full Name</label>
-                            <input type="text" class="form-control" id="shop_owner_name" name="shop_owner_name" value="<?php echo sanitize($agent['shop_owner_name']); ?>">
+                            <input type="text" class="form-control" id="shop_owner_name" name="shop_owner_name" value="<?php echo sanitize($agent['shop_owner_name'] ?? ''); ?>">
                         </div>
                         
                         <div class="col-12 col-md-4">
                             <label for="mobile_number" class="form-label">Contact Mobile</label>
-                            <input type="text" class="form-control" id="mobile_number" name="mobile_number" value="<?php echo sanitize($agent['mobile_number']); ?>">
+                            <input type="text" class="form-control" id="mobile_number" name="mobile_number" value="<?php echo sanitize($agent['mobile_number'] ?? ''); ?>">
                         </div>
                         <div class="col-12 col-md-4">
                             <label for="whatsapp_number" class="form-label">WhatsApp Channel Number</label>
-                            <input type="text" class="form-control" id="whatsapp_number" name="whatsapp_number" value="<?php echo sanitize($agent['whatsapp_number']); ?>">
+                            <input type="text" class="form-control" id="whatsapp_number" name="whatsapp_number" value="<?php echo sanitize($agent['whatsapp_number'] ?? ''); ?>">
                         </div>
                         <div class="col-12 col-md-4">
                             <label for="business_type" class="form-label">Business Line Type</label>
-                            <input type="text" class="form-control" id="business_type" name="business_type" value="<?php echo sanitize($agent['business_type']); ?>">
+                            <input type="text" class="form-control" id="business_type" name="business_type" value="<?php echo sanitize($agent['business_type'] ?? ''); ?>">
                         </div>
                         
                         <div class="col-12">
                             <label for="shop_address" class="form-label">Physical Shop Address</label>
-                            <textarea class="form-control" id="shop_address" name="shop_address" rows="2"><?php echo sanitize($agent['shop_address']); ?></textarea>
+                            <textarea class="form-control" id="shop_address" name="shop_address" rows="2"><?php echo sanitize($agent['shop_address'] ?? ''); ?></textarea>
                         </div>
                         
                         <div class="col-12 col-md-4">
                             <label for="city" class="form-label">City</label>
-                            <input type="text" class="form-control" id="city" name="city" value="<?php echo sanitize($agent['city']); ?>">
+                            <input type="text" class="form-control" id="city" name="city" value="<?php echo sanitize($agent['city'] ?? ''); ?>">
                         </div>
                         <div class="col-12 col-md-4">
                             <label for="state" class="form-label">State</label>
-                            <input type="text" class="form-control" id="state" name="state" value="<?php echo sanitize($agent['state']); ?>">
+                            <input type="text" class="form-control" id="state" name="state" value="<?php echo sanitize($agent['state'] ?? ''); ?>">
                         </div>
                         <div class="col-12 col-md-4">
                             <label for="pincode" class="form-label">Pincode</label>
-                            <input type="text" class="form-control" id="pincode" name="pincode" value="<?php echo sanitize($agent['pincode']); ?>">
+                            <input type="text" class="form-control" id="pincode" name="pincode" value="<?php echo sanitize($agent['pincode'] ?? ''); ?>">
                         </div>
                     </div>
 
                     <!-- Form 3: statutory and uploads -->
-                    <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-success"><i class="fa-solid fa-file-shield me-2"></i>3. statutory & Branding uploads</h6>
+                    <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-success"><i class="fa-solid fa-file-shield me-2"></i>3. Statutory & Branding Uploads</h6>
                     <div class="row g-3 mb-4">
                         <div class="col-12 col-md-4">
                             <label for="gst_number" class="form-label">GSTIN Number</label>
-                            <input type="text" class="form-control" id="gst_number" name="gst_number" value="<?php echo sanitize($agent['gst_number']); ?>" placeholder="22AAAAA1111A1Z1">
+                            <input type="text" class="form-control" id="gst_number" name="gst_number" value="<?php echo sanitize($agent['gst_number'] ?? ''); ?>" placeholder="22AAAAA1111A1Z1">
                         </div>
                         <div class="col-12 col-md-4">
                             <label for="license_number" class="form-label">Agent License / RTO Code</label>
-                            <input type="text" class="form-control" id="license_number" name="license_number" value="<?php echo sanitize($agent['license_number']); ?>" placeholder="LIC-9087-A1">
+                            <input type="text" class="form-control" id="license_number" name="license_number" value="<?php echo sanitize($agent['license_number'] ?? ''); ?>" placeholder="LIC-9087-A1">
                         </div>
                         <div class="col-12 col-md-4">
                             <label for="pan_number" class="form-label">Business / Personal PAN</label>
-                            <input type="text" class="form-control" id="pan_number" name="pan_number" value="<?php echo sanitize($agent['pan_number']); ?>" placeholder="ABCDE1234F">
+                            <input type="text" class="form-control" id="pan_number" name="pan_number" value="<?php echo sanitize($agent['pan_number'] ?? ''); ?>" placeholder="ABCDE1234F">
                         </div>
                         
                         <div class="col-12 col-md-6">
@@ -255,6 +263,41 @@ include_once __DIR__ . '/../includes/header.php';
                         <div class="col-12 col-md-6">
                             <label for="shop_banner" class="form-label">Update Shop Banner <span class="text-muted small">(PNG/JPG, Max 2MB)</span></label>
                             <input type="file" class="form-control" id="shop_banner" name="shop_banner">
+                        </div>
+                    </div>
+
+                    <!-- Form 4: Automated Notifications -->
+                    <h6 class="border-bottom pb-2 font-weight-600 mb-3 text-success"><i class="fa-solid fa-bell me-2"></i>4. Automated Notification Settings</h6>
+                    <div class="row g-3 mb-4">
+                        <div class="col-12 col-md-12 mb-2">
+                            <div class="alert alert-info py-2 mb-0 small">
+                                <i class="fa-solid fa-info-circle me-1"></i> These settings control the background automated WhatsApp reminders. Messages will only be sent if you have sufficient message balance.
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label for="notify_days_before" class="form-label">Send Early Reminder (Days Before Expiry)</label>
+                            <div class="input-group">
+                                <input type="number" min="2" max="60" class="form-control" id="notify_days_before" name="notify_days_before" value="<?php echo (int)($agent['notify_days_before'] ?? 7); ?>">
+                                <span class="input-group-text bg-light">Days</span>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 d-flex align-items-center">
+                            <div class="form-check form-switch mt-md-4">
+                                <input class="form-check-input" type="checkbox" role="switch" id="notify_before_enabled" name="notify_before_enabled" <?php echo ($agent['notify_before_enabled'] ?? 1) ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="notify_before_enabled">Enable Early Reminder</label>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 d-flex align-items-center">
+                            <div class="form-check form-switch mt-md-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="notify_1day_before_enabled" name="notify_1day_before_enabled" <?php echo ($agent['notify_1day_before_enabled'] ?? 1) ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="notify_1day_before_enabled">Enable "1 Day Before" Urgent Reminder</label>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 d-flex align-items-center">
+                            <div class="form-check form-switch mt-md-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="notify_after_expiry_enabled" name="notify_after_expiry_enabled" <?php echo ($agent['notify_after_expiry_enabled'] ?? 1) ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="notify_after_expiry_enabled">Enable "1 Day After" Expiry Reminder</label>
+                            </div>
                         </div>
                     </div>
 

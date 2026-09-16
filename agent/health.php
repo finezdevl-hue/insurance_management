@@ -54,7 +54,8 @@ if ($action === 'delete' && isset($_GET['id'])) {
 if ($action === 'send_reminder' && isset($_GET['id'])) {
     $policyId = (int)$_GET['id'];
     try {
-        $quotaCheck = canAgentSendMessages($agentId, 1);
+        $senderUserId = $_SESSION['user_id'];
+        $quotaCheck = canAgentSendMessages($senderUserId, 1);
         if (!$quotaCheck['allowed']) {
             $_SESSION['alert_error'] = getMessageLimitError($quotaCheck['balance'], $quotaCheck['requested']);
             redirect('health.php');
@@ -73,7 +74,11 @@ if ($action === 'send_reminder' && isset($_GET['id'])) {
             $expDays = getDaysUntil($policy['expiry_date']);
             $expiryFormatted = date('d-M-Y', strtotime($policy['expiry_date']));
             
-            $msg = "Hello *{$policy['customer_name']}*, your Health Insurance Policy *{$policy['policy_number']}* ({$policy['policy_name']}) is expiring on *{$expiryFormatted}* ({$expDays} days left). Please contact us to renew it to ensure uninterrupted coverage. Thank you!";
+            $stmtA = $db->prepare("SELECT mobile_number FROM users WHERE id = ?");
+            $stmtA->execute([$agentId]);
+            $agentMobile = $stmtA->fetchColumn();
+            $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
+            $msg = "Dear Customer,\n\nThis is a gentle reminder that your Health Insurance Policy *{$policy['policy_number']}* ({$policy['policy_name']}) is due for renewal on *{$expiryFormatted}* (in {$expDays} days).\n\nTo ensure continuous coverage and peace of mind for you and your family, please reach out to us at *{$agentMobile}* to complete your renewal.\n\nView Our Outlets & Details:\n{$centersUrl}\n\nThank you for choosing our services!";
             
             $res = sendWhatsAppMessage($policy['whatsapp_number'], $msg, $policy['customer_name'], $policy['policy_number'], $expiryFormatted);
             
@@ -96,7 +101,7 @@ if ($action === 'send_reminder' && isset($_GET['id'])) {
             logActivity('Send Health Reminder', "Sent renewal reminder for Health Policy: {$policy['policy_number']}");
             
             if ($res['success']) {
-                deductAgentMessages($agentId, 1);
+                deductAgentMessages($senderUserId, 1);
                 $_SESSION['alert_success'] = 'Renewal reminder alert sent successfully via WhatsApp!';
             } else {
                 $_SESSION['alert_error'] = 'Alert failed to send: ' . sanitize($res['response']);
@@ -209,8 +214,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-}
-
 // D. Import Health CSV
 if ($action === 'import_csv_health' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -218,18 +221,24 @@ if ($action === 'import_csv_health' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Please upload a valid CSV file.');
         }
         $handle = fopen($_FILES['csv_file']['tmp_name'], 'r');
-        $headers = fgetcsv($handle);
+        $headers = fgetcsv($handle, 0, ',', '"', '\\');
         if (!$headers) throw new RuntimeException('Empty CSV file.');
         $headers = array_map('trim', $headers);
-        $req = ['customer_name', 'customer_mobile', 'insurance_company', 'policy_number', 'policy_name', 'insured_persons', 'start_date', 'expiry_date', 'premium_amount'];
+        $headers = array_map('strtolower', $headers);
+        $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]); // Remove BOM
+        
+        $req = ['customer_name', 'customer_mobile', 'customer_whatsapp', 'customer_email', 'customer_address', 'insurance_company', 'policy_number', 'policy_name', 'insured_persons', 'start_date', 'expiry_date', 'premium_amount'];
         foreach ($req as $r) {
             if (!in_array($r, $headers)) throw new RuntimeException("Missing column: $r");
         }
         $db->beginTransaction();
+        
+        $db->prepare("DELETE FROM health_insurances WHERE agent_id = ?")->execute([$agentId]);
+        
         $imported = 0;
         $skipped = 0;
         
-        while (($data = fgetcsv($handle)) !== false) {
+        while (($data = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
             if (!array_filter($data)) continue;
             $row = [];
             foreach ($headers as $index => $header) {
@@ -237,6 +246,9 @@ if ($action === 'import_csv_health' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $custName = trim($row['customer_name'] ?? '');
             $custMobile = trim($row['customer_mobile'] ?? '');
+            $custWhatsapp = trim($row['customer_whatsapp'] ?? '');
+            $custEmail = trim($row['customer_email'] ?? '');
+            $custAddress = trim($row['customer_address'] ?? '');
             $company = trim($row['insurance_company'] ?? '');
             $policyNumber = trim($row['policy_number'] ?? '');
             $policyName = trim($row['policy_name'] ?? '');
@@ -255,9 +267,15 @@ if ($action === 'import_csv_health' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtC->execute([$custMobile, $agentId]);
             $custId = $stmtC->fetchColumn();
             if (!$custId) {
-                $db->prepare("INSERT INTO customers (agent_id, name, mobile_number, whatsapp_number) VALUES (?, ?, ?, ?)")
-                   ->execute([$agentId, $custName, $custMobile, $custMobile]);
+                $db->prepare("INSERT INTO customers (agent_id, name, mobile_number, whatsapp_number, email, address) VALUES (?, ?, ?, ?, ?, ?)")
+                   ->execute([$agentId, $custName, $custMobile, $custWhatsapp ?: $custMobile, $custEmail, $custAddress]);
                 $custId = $db->lastInsertId();
+            } else {
+                // Update existing customer details if they are provided
+                if ($custWhatsapp || $custEmail || $custAddress) {
+                    $db->prepare("UPDATE customers SET whatsapp_number = COALESCE(NULLIF(?, ''), whatsapp_number), email = COALESCE(NULLIF(?, ''), email), address = COALESCE(NULLIF(?, ''), address) WHERE id = ? AND agent_id = ?")
+                       ->execute([$custWhatsapp ?: $custMobile, $custEmail, $custAddress, $custId, $agentId]);
+                }
             }
             
             // 2. Get Insurance Company
@@ -265,18 +283,8 @@ if ($action === 'import_csv_health' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtI->execute([$company]);
             $companyId = $stmtI->fetchColumn() ?: 1;
             
-            // 3. Update/Insert Policy
-            $stmtH = $db->prepare("SELECT id FROM health_insurances WHERE policy_number = ?");
-            $stmtH->execute([$policyNumber]);
-            $hId = $stmtH->fetchColumn();
-            
-            if ($hId) {
-                $db->prepare("UPDATE health_insurances SET customer_id=?, insurance_company_id=?, policy_name=?, insured_persons=?, start_date=?, expiry_date=?, premium_amount=? WHERE id=? AND agent_id=?")
-                   ->execute([$custId, $companyId, $policyName, $insured, $start ?: null, $expiry, $premium, $hId, $agentId]);
-            } else {
-                $db->prepare("INSERT INTO health_insurances (agent_id, customer_id, insurance_company_id, policy_number, policy_name, insured_persons, start_date, expiry_date, premium_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                   ->execute([$agentId, $custId, $companyId, $policyNumber, $policyName, $insured, $start ?: null, $expiry, $premium]);
-            }
+            $db->prepare("INSERT INTO health_insurances (agent_id, customer_id, insurance_company_id, policy_number, policy_name, insured_persons, start_date, expiry_date, premium_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+               ->execute([$agentId, $custId, $companyId, $policyNumber, $policyName, $insured, $start ?: null, $expiry, $premium]);
             $imported++;
         }
         fclose($handle);
@@ -296,10 +304,10 @@ if ($action === 'export_csv_health') {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename=health_policies_' . date('Ymd_His') . '.csv');
     $output = fopen('php://output', 'w');
-    fputcsv($output, ['customer_name', 'customer_mobile', 'insurance_company', 'policy_number', 'policy_name', 'insured_persons', 'start_date', 'expiry_date', 'premium_amount']);
+    fputcsv($output, ['customer_name', 'customer_mobile', 'customer_whatsapp', 'customer_email', 'customer_address', 'insurance_company', 'policy_number', 'policy_name', 'insured_persons', 'start_date', 'expiry_date', 'premium_amount'], ',', '"', '\\');
     
     $stmt = $db->prepare("
-        SELECT c.name, c.mobile_number, i.name as company, h.policy_number, h.policy_name, h.insured_persons, h.start_date, h.expiry_date, h.premium_amount 
+        SELECT c.name, c.mobile_number, c.whatsapp_number, c.email, c.address, i.name as company, h.policy_number, h.policy_name, h.insured_persons, h.start_date, h.expiry_date, h.premium_amount 
         FROM health_insurances h 
         JOIN customers c ON h.customer_id = c.id 
         JOIN insurance_companies i ON h.insurance_company_id = i.id 
@@ -307,7 +315,7 @@ if ($action === 'export_csv_health') {
     ");
     $stmt->execute([$agentId]);
     while ($row = $stmt->fetch(PDO::FETCH_NUM)) {
-        fputcsv($output, $row);
+        fputcsv($output, $row, ',', '"', '\\');
     }
     fclose($output);
     exit;
@@ -451,6 +459,7 @@ include_once __DIR__ . '/../includes/header.php';
                     confirmButtonText: 'Yes, delete it!'
                 }).then((result) => {
                     if (result.isConfirmed) {
+                        $('#loader-wrapper').fadeIn(200);
                         window.location.href = url;
                     }
                 });
@@ -609,7 +618,7 @@ include_once __DIR__ . '/../includes/header.php';
                     <div class="alert alert-info border-0 d-flex align-items-start gap-3" style="border-radius: 10px;">
                         <i class="fa-solid fa-circle-info mt-1"></i>
                         <div class="small">
-                            <strong>Required columns:</strong> <code>customer_name</code>, <code>customer_mobile</code>, <code>insurance_company</code>, <code>policy_number</code>, <code>policy_name</code>, <code>insured_persons</code>, <code>start_date</code>, <code>expiry_date</code>, <code>premium_amount</code>.
+                            <strong>Required columns:</strong> <code>customer_name</code>, <code>customer_mobile</code>, <code>customer_whatsapp</code>, <code>customer_email</code>, <code>customer_address</code>, <code>insurance_company</code>, <code>policy_number</code>, <code>policy_name</code>, <code>insured_persons</code>, <code>start_date</code>, <code>expiry_date</code>, <code>premium_amount</code>.
                             <br>The system will automatically link or update records based on the Policy Number.
                         </div>
                     </div>
@@ -620,7 +629,7 @@ include_once __DIR__ . '/../includes/header.php';
                         </a>
                     </div>
 
-                    <form action="health.php?action=import_csv_health" method="POST" enctype="multipart/form-data">
+                    <form action="health.php?action=import_csv_health" method="POST" enctype="multipart/form-data" onsubmit="return confirm('WARNING: Uploading this CSV will DELETE ALL your existing Health Insurance Policies. Are you absolutely sure you want to proceed?');">
                         <div class="mb-3">
                             <label for="csv_file" class="form-label">CSV File <span class="text-danger">*</span></label>
                             <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv" required>

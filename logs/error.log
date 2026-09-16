@@ -1,0 +1,2 @@
+[2026-09-16 10:52:17] [NOTICE] [IP: CLI] [User: #0 (guest)] [URI: CLI CLI Script] System logging initialized successfully on testing environment. in  on line 0
+[2026-09-16 10:52:38] [WARNING] [IP: CLI] [User: #0 (guest)] [URI: CLI CLI Script] Undefined array key "REQUEST_METHOD" in C:\xampp\htdocs\vehicle_manage\index.php on line 25

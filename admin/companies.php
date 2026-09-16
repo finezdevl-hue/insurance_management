@@ -253,7 +253,8 @@ $(document).ready(function() {
             confirmButtonText: 'Yes, delete carrier'
         }).then((result) => {
             if (result.isConfirmed) {
-                window.location.href = url;
+                $('#loader-wrapper').fadeIn(200);
+                        window.location.href = url;
             }
         });
     });

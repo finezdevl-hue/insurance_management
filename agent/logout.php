@@ -25,5 +25,5 @@ if (ini_get("session.use_cookies")) {
 // Destroy session
 session_destroy();
 
-// Redirect to login
+// Redirect to main login portal
 redirect('../index.php');

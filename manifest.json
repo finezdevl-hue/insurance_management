@@ -1,0 +1,14 @@
+{
+  "name": "Vehicle Details & Insurance Renewal Management System",
+  "short_name": "VehiclePortal",
+  "start_url": "index.php",
+  "display": "standalone",
+  "background_color": "#10b981",
+  "theme_color": "#10b981",
+  "orientation": "portrait",
+  "serviceworker": {
+    "src": "sw.js",
+    "scope": "./",
+    "type": "classic"
+  }
+}

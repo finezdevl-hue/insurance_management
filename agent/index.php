@@ -10,12 +10,13 @@ require_once __DIR__ . '/../includes/functions.php';
 checkAccess('agent');
 
 $db = getDBConnection();
-$agentId = $_SESSION['user_id'];
+$agentId = getEffectiveAgentId();
 
 $pageTitle = 'Agent Dashboard Portal';
 $pageHeading = 'Agency Dashboard';
 $activePage = 'dashboard';
 $messageSummary = getAgentMessageSummary($agentId);
+$agentSub = getAgentActiveSubscription($agentId);
 
 // --- STATISTICAL DATA (AGENT SPECIFIC) ---
 
@@ -67,6 +68,30 @@ if (hasAgentAccess('pollution')) {
 }
 $totalExpired = $expiredInsurances + $expiredPollutions;
 
+// Today's Expirations
+$todaysInsurances = 0;
+if (hasAgentAccess('vehicle')) {
+    $stmt = $db->prepare("SELECT COUNT(*) FROM insurances WHERE agent_id = ? AND expiry_date = CURDATE()");
+    $stmt->execute([$agentId]);
+    $todaysInsurances = $stmt->fetchColumn();
+}
+
+$todaysPollutions = 0;
+if (hasAgentAccess('pollution')) {
+    $stmt = $db->prepare("SELECT COUNT(*) FROM pollution_certificates WHERE agent_id = ? AND expiry_date = CURDATE()");
+    $stmt->execute([$agentId]);
+    $todaysPollutions = $stmt->fetchColumn();
+}
+
+$todaysHealth = 0;
+if (hasAgentAccess('health')) {
+    $stmt = $db->prepare("SELECT COUNT(*) FROM health_insurances WHERE agent_id = ? AND expiry_date = CURDATE()");
+    $stmt->execute([$agentId]);
+    $todaysHealth = $stmt->fetchColumn();
+}
+
+$totalTodaysRenewals = $todaysInsurances + $todaysPollutions + $todaysHealth;
+
 // Health Insurance statistics if enabled
 $totalHealthPolicies = 0;
 $upcomingHealthPolicies = 0;
@@ -94,22 +119,22 @@ $params = [];
 
 if (hasAgentAccess('vehicle')) {
     $parts[] = "
-        SELECT 'Insurance' as type, i.expiry_date, v.vehicle_number, v.brand, v.model, c.name as customer_name, c.mobile_number, c.whatsapp_number, c.id as customer_id, v.id as vehicle_id
+        SELECT 'Insurance' as type, i.expiry_date, v.vehicle_number, 'Vehicle' as brand, '' as model, c.name as customer_name, c.mobile_number, c.whatsapp_number, c.id as customer_id, v.id as vehicle_id
         FROM insurances i
         JOIN vehicles v ON i.vehicle_id = v.id
         JOIN customers c ON v.customer_id = c.id
-        WHERE i.agent_id = ? AND i.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+        WHERE i.agent_id = ?
     ";
     $params[] = $agentId;
 }
 
 if (hasAgentAccess('pollution')) {
     $parts[] = "
-        SELECT 'Pollution' as type, p.expiry_date, v.vehicle_number, v.brand, v.model, c.name as customer_name, c.mobile_number, c.whatsapp_number, c.id as customer_id, v.id as vehicle_id
+        SELECT 'Pollution' as type, p.expiry_date, v.vehicle_number, 'PUC' as brand, '' as model, c.name as customer_name, c.mobile_number, c.whatsapp_number, c.id as customer_id, v.id as vehicle_id
         FROM pollution_certificates p
         JOIN vehicles v ON p.vehicle_id = v.id
         JOIN customers c ON v.customer_id = c.id
-        WHERE p.agent_id = ? AND p.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+        WHERE p.agent_id = ?
     ";
     $params[] = $agentId;
 }
@@ -119,13 +144,13 @@ if (hasAgentAccess('health')) {
         SELECT 'Health' as type, h.expiry_date, 'N/A' as vehicle_number, 'Health Policy' as brand, '' as model, c.name as customer_name, c.mobile_number, c.whatsapp_number, c.id as customer_id, 0 as vehicle_id
         FROM health_insurances h
         JOIN customers c ON h.customer_id = c.id
-        WHERE h.agent_id = ? AND h.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+        WHERE h.agent_id = ?
     ";
     $params[] = $agentId;
 }
 
 if (!empty($parts)) {
-    $query = implode(" UNION ALL ", $parts) . " ORDER BY expiry_date ASC LIMIT 8";
+    $query = implode(" UNION ALL ", $parts) . " ORDER BY expiry_date ASC LIMIT 10";
     $stmt = $db->prepare($query);
     $stmt->execute($params);
     $expiringAlerts = $stmt->fetchAll();
@@ -139,7 +164,8 @@ if (isset($_POST['send_whatsapp_reminder'])) {
     $vehicleId = (int)$_POST['vehicle_id'];
     $remType = $_POST['reminder_type'];
     $expiryVal = $_POST['expiry_date'];
-    $quotaCheck = canAgentSendMessages($agentId, 1);
+    $senderUserId = $_SESSION['user_id'];
+    $quotaCheck = canAgentSendMessages($senderUserId, 1);
 
     if (!$quotaCheck['allowed']) {
         $_SESSION['alert_error'] = getMessageLimitError($quotaCheck['balance'], $quotaCheck['requested']);
@@ -162,11 +188,23 @@ if (isset($_POST['send_whatsapp_reminder'])) {
         $name = $customer['name'];
         $whatsapp = $customer['whatsapp_number'];
         
+        // Fetch specific creator shop or parent agent details for this reminder
+        $shopInfo = getShopDetailsForReminder($vehicleId, $remType, $agentId);
+        $agentMobile = $shopInfo['mobile_number'];
+        $shopAddress = $shopInfo['shop_address'];
+        $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
+        
         // Dynamic message compilation
-        $message = "Hello {$name}, your " . ($remType === 'Health' ? 'Health Insurance Policy' : "vehicle {$vehNumber} {$remType}") . " will expire on {$expiryVal}. Please renew it soon.";
+        if ($remType === 'Health') {
+            $message = "Dear Customer,\n\nThis is a gentle reminder that your Health Insurance Policy is due for renewal on {$expiryVal}.\n\nTo ensure continuous coverage and peace of mind for you and your family, please reach out to us at {$agentMobile} to complete your renewal.\n\nView Testing Centers & Details:\n{$centersUrl}";
+        } elseif ($remType === 'Pollution') {
+            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease visit our testing center at {$shopAddress} (Phone: {$agentMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
+        } else {
+            $message = "Dear Customer,\n\nThis is an important reminder that the {$remType} for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease contact us at {$agentMobile} to process your renewal and ensure continuous validity.\n\nView Testing Centers & Details:\n{$centersUrl}";
+        }
         
         // Execute transmission
-        $apiResult = sendWhatsAppMessage($whatsapp, $message, $name, $vehNumber, $expiryVal);
+        $apiResult = sendWhatsAppMessage($whatsapp, $message, $name, $vehNumber, $expiryVal, $agentMobile, $centersUrl);
         
         // Log results in reminder history
         $status = $apiResult['success'] ? 'sent' : 'failed';
@@ -183,7 +221,7 @@ if (isset($_POST['send_whatsapp_reminder'])) {
         $stmtHistory->execute([$custId, $vehicleId ?: null, $remType, $period, $agentId, $status, $message, $apiResp]);
         
         if ($apiResult['success']) {
-            deductAgentMessages($agentId, 1);
+            deductAgentMessages($senderUserId, 1);
             $_SESSION['alert_success'] = "WhatsApp alert sent successfully to {$name}!";
         } else {
             $_SESSION['alert_error'] = 'API dispatch failed: ' . $apiResult['response'];
@@ -200,6 +238,30 @@ if (isset($_POST['send_whatsapp_reminder'])) {
 
 include_once __DIR__ . '/../includes/header.php';
 ?>
+
+<!-- Subscription Alert & Status Banner -->
+<?php if ($agentSub['is_expired'] || $agentSub['status'] === 'expiring_soon'): ?>
+<div class="alert <?php echo $agentSub['is_expired'] ? 'alert-danger' : 'alert-warning'; ?> d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3 p-3 shadow-sm border-0 mb-4 rounded-3">
+    <div class="d-flex align-items-center gap-3">
+        <div class="fs-2 <?php echo $agentSub['is_expired'] ? 'text-danger' : 'text-warning'; ?>">
+            <i class="fa-solid <?php echo $agentSub['is_expired'] ? 'fa-triangle-exclamation' : 'fa-clock-rotate-left'; ?>"></i>
+        </div>
+        <div>
+            <h6 class="font-weight-700 m-0 text-dark">
+                <?php if ($agentSub['is_expired']): ?>
+                    Subscription Expired - Action Required
+                <?php else: ?>
+                    Subscription Expiring in <?php echo $agentSub['days_left']; ?> Days (Valid till <?php echo date('d-M-Y', strtotime($agentSub['expiry_date'])); ?>)
+                <?php endif; ?>
+            </h6>
+            <span class="small text-muted">Renew your subscription plan today to avoid service interruption and unlock bonus SMS credits.</span>
+        </div>
+    </div>
+    <a href="subscriptions.php" class="btn <?php echo $agentSub['is_expired'] ? 'btn-danger' : 'btn-warning text-dark'; ?> font-weight-600 text-nowrap px-4 py-2 shadow-xs">
+        <i class="fa-solid fa-crown me-1"></i> Renew Subscription
+    </a>
+</div>
+<?php endif; ?>
 
 <!-- Statistics row -->
 <div class="row">
@@ -240,6 +302,17 @@ include_once __DIR__ . '/../includes/header.php';
     </div>
     <?php endif; ?>
     
+    <!-- Today's Renewals Count -->
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card stat-card border-start border-4 border-danger">
+            <div class="stat-icon-wrapper bg-danger bg-opacity-10 text-danger">
+                <i class="fa-solid fa-calendar-day"></i>
+            </div>
+            <p class="stat-title">Today's Renewals</p>
+            <h3 class="stat-value text-danger"><?php echo $totalTodaysRenewals; ?></h3>
+        </div>
+    </div>
+
     <!-- Expirations next 30 days -->
     <div class="col-12 col-sm-6 col-xl-3">
         <div class="card stat-card border-start border-4 border-warning">
@@ -287,8 +360,13 @@ include_once __DIR__ . '/../includes/header.php';
     <div class="col-12 col-xl-8">
         <div class="card h-100">
             <div class="card-header bg-white py-3 d-flex align-items-center justify-content-between">
-                <h5 class="card-title"><i class="fa-solid fa-bell text-warning me-2"></i>Urgent Renewals Alert Center</h5>
-                <a href="reminders.php" class="btn btn-sm btn-light border text-primary">All Renewals</a>
+                <h5 class="card-title m-0"><i class="fa-solid fa-bell text-warning me-2"></i>Urgent Renewals Alert Center</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" onclick="sendAutoAlertBatch()" class="btn btn-sm btn-success rounded-pill px-3 font-weight-700">
+                        <i class="fa-solid fa-bolt me-1"></i> Send All Auto Alerts
+                    </button>
+                    <a href="reminders.php" class="btn btn-sm btn-light border text-primary">All Renewals</a>
+                </div>
             </div>
             <div class="card-body">
                 
@@ -365,43 +443,55 @@ include_once __DIR__ . '/../includes/header.php';
         </div>
     </div>
     
-    <!-- Quick Links & Templates widget -->
+    <!-- Quick Links widget -->
     <div class="col-12 col-xl-4 mt-4 mt-xl-0">
         <div class="card h-100">
             <div class="card-header bg-white py-3">
-                <h5 class="card-title"><i class="fa-regular fa-message text-success me-2"></i>Alert Message Templates</h5>
+                <h5 class="card-title"><i class="fa-solid fa-compass text-primary me-2"></i>Quick Navigation Shortcuts</h5>
             </div>
             <div class="card-body">
-                
-                <div class="alert bg-light border p-3 mb-3" style="border-radius: var(--radius-sm);">
-                    <div class="d-flex align-items-center justify-content-between mb-2">
-                        <span class="badge bg-success"><i class="fa-brands fa-whatsapp me-1"></i> WhatsApp Message Template</span>
-                    </div>
-                    <p class="m-0 small text-muted font-monospace bg-white p-2.5 border rounded">
-                        "Hello <strong>{customer_name}</strong>, your vehicle <strong>{vehicle_number}</strong> <strong>{reminder_type}</strong> will expire on <strong>{expiry_date}</strong>. Please renew it soon."
-                    </p>
-                    <div class="mt-2 text-muted small" style="font-size: 0.75rem;">
-                        <i class="fa-solid fa-circle-info me-1"></i> Automatically sent using WhatsApp Cloud API templates on clicking the <strong>Alert</strong> button.
-                    </div>
-                </div>
-                
-                <!-- Quick Operations Navigator -->
-                <h6 class="font-weight-600 mb-3 mt-4 text-main border-bottom pb-2">Quick Navigation Shortcuts</h6>
                 <div class="d-grid gap-2">
-                    <a href="customers.php?action=add" class="btn btn-outline-primary text-start">
-                        <i class="fa-solid fa-user-plus me-2 text-muted"></i> Register New Customer (ID Upload)
-                    </a>
                     <a href="vehicles.php?action=add" class="btn btn-outline-primary text-start">
-                        <i class="fa-solid fa-car-rear me-2 text-muted"></i> Add Vehicle Record & Upload Photo
+                        <i class="fa-solid fa-car-rear me-2 text-muted"></i> Register New Vehicle & Owner
                     </a>
                     <a href="vehicles.php" class="btn btn-outline-primary text-start">
-                        <i class="fa-solid fa-folder-open me-2 text-muted"></i> Manage Insurance & Pollution Certificates
+                        <i class="fa-solid fa-folder-open me-2 text-muted"></i> Manage Vehicles & Expiries
+                    </a>
+                    <a href="reminders.php" class="btn btn-outline-primary text-start">
+                        <i class="fa-solid fa-bell me-2 text-muted"></i> Expiry Alerts & Renewals
                     </a>
                 </div>
-                
             </div>
         </div>
     </div>
 </div>
+
+<script>
+function sendAutoAlertBatch() {
+    Swal.fire({
+        title: 'Executing Automatic Daily Alerts',
+        text: 'Sending automated WhatsApp renewal reminders to all expiring customers...',
+        allowOutsideClick: false,
+        didOpen: () => { Swal.showLoading(); }
+    });
+
+    fetch('../send_auto_alert_ajax.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ action: 'send_all_auto' })
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.success) {
+            Swal.fire('Automated Alerts Triggered!', res.message, 'success').then(() => window.location.reload());
+        } else {
+            Swal.fire('Error', res.error, 'error');
+        }
+    })
+    .catch(err => {
+        Swal.fire('Completed!', 'Automated daily renewal alerts process triggered successfully.', 'success');
+    });
+}
+</script>
 
 <?php include_once __DIR__ . '/../includes/footer.php'; ?>
