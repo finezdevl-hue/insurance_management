@@ -159,34 +159,37 @@
                 let raw = val.toUpperCase().replace(/[^A-Z0-9]/g, '');
                 if (!raw) return '';
                 
-                // 1. Full standard match: 2 letters + 1-2 digits + 1-3 letters + 1-4 digits
-                let m1 = raw.match(/^([A-Z]{2})(\d{1,2})([A-Z]{1,3})(\d{1,4})$/);
+                // Bharat series match: 2 digits + BH + 1-4 digits + 1-2 letters (e.g. 22BH1234AA)
+                if (/^\d{2}B/.test(raw)) {
+                    let mBH = raw.match(/^(\d{2})(BH)?(\d{1,4})?([A-Z]{1,2})?$/);
+                    if (mBH) {
+                        let parts = [mBH[1]];
+                        if (mBH[2] !== undefined) parts.push(mBH[2]);
+                        if (mBH[3] !== undefined) parts.push(mBH[3]);
+                        if (mBH[4] !== undefined) parts.push(mBH[4]);
+                        return parts.join('-');
+                    }
+                }
+                
+                // Format 1: State (2 letters) + RTO (1-2 digits) + Series (1-3 letters) + Number (1-4 digits)
+                let m1 = raw.match(/^([A-Z]{2})(\d{1,2})([A-Z]{1,3})?(\d{1,4})?$/);
                 if (m1) {
-                    let rto = m1[2].length === 1 ? '0' + m1[2] : m1[2];
-                    return m1[1] + '-' + rto + '-' + m1[3] + '-' + m1[4];
-                }
-                
-                // 2. Full match without series: 2 letters + 1-2 digits + 1-4 digits
-                let m2 = raw.match(/^([A-Z]{2})(\d{1,2})(\d{1,4})$/);
-                if (m2) {
-                    let rto = m2[2].length === 1 ? '0' + m2[2] : m2[2];
-                    return m2[1] + '-' + rto + '-' + m2[3];
-                }
-                
-                // 3. Bharat series match: 2 digits + BH + 4 digits + 1-2 letters
-                let m3 = raw.match(/^(\d{2})(BH)(\d{1,4})([A-Z]{1,2})$/);
-                if (m3) {
-                    return m3[1] + '-BH-' + m3[3] + '-' + m3[4];
-                }
-                
-                // 4. Progressive typing match (as user types)
-                let p = raw.match(/^([A-Z]{2})(\d{1,2})?([A-Z]{1,3})?(\d{1,4})?$/);
-                if (p) {
-                    let parts = [p[1]];
-                    if (p[2]) parts.push(p[2]);
-                    if (p[3]) parts.push(p[3]);
-                    if (p[4]) parts.push(p[4]);
+                    let parts = [m1[1]];
+                    if (m1[2] !== undefined) parts.push(m1[2]);
+                    if (m1[3] !== undefined) parts.push(m1[3]);
+                    if (m1[4] !== undefined) parts.push(m1[4]);
                     return parts.join('-');
+                }
+                
+                // Format 2: No series letters with full number (e.g. KL071515)
+                let m2 = raw.match(/^([A-Z]{2})(\d{2})(\d{1,4})$/);
+                if (m2) {
+                    return m2[1] + '-' + m2[2] + '-' + m2[3];
+                }
+                
+                // If only state letters so far (e.g. K, KL)
+                if (/^[A-Z]{1,2}$/.test(raw)) {
+                    return raw;
                 }
                 
                 return raw;
@@ -197,8 +200,23 @@
             });
 
             $(document).on('blur', 'input[name="vehicle_number"], input#vehicle_number, input#v_vehicle_number, .vehicle-number-input', function() {
-                if (this.value) {
-                    this.value = formatVehicleString(this.value);
+                if (!this.value) return;
+                let raw = this.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                if (!raw) return;
+                
+                // Full standard match on blur (auto pads 1-digit RTO if series + number are present)
+                let m1 = raw.match(/^([A-Z]{2})(\d{1,2})([A-Z]{1,3})(\d{1,4})$/);
+                if (m1) {
+                    let rto = m1[2].length === 1 ? '0' + m1[2] : m1[2];
+                    this.value = m1[1] + '-' + rto + '-' + m1[3] + '-' + m1[4];
+                    return;
+                }
+                
+                // Full match without series on blur (requires full 6+ chars e.g. KL071515)
+                let m2 = raw.match(/^([A-Z]{2})(\d{1,2})(\d{3,4})$/);
+                if (m2) {
+                    let rto = m2[2].length === 1 ? '0' + m2[2] : m2[2];
+                    this.value = m2[1] + '-' + rto + '-' + m2[3];
                 }
             });
         });
