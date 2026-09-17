@@ -1,37 +1,45 @@
 <?php
 /**
- * WhatsApp Reminder History Log (Agent View)
+ * WhatsApp Reminder History Log (Agent & Shop View)
  * Vehicle Details & Insurance Renewal Management System
  */
 
 require_once __DIR__ . '/../includes/functions.php';
 
-// Enforce agent login
+// Enforce agent or shop login
 checkAccess('agent');
 
 $db = getDBConnection();
-$agentId = $_SESSION['user_id'];
+$userId = (int)$_SESSION['user_id'];
+$userRole = $_SESSION['role'] ?? 'agent';
+$effectiveAgentId = getEffectiveAgentId();
 
 $pageTitle = 'WhatsApp Sent History';
 $pageHeading = 'My Sent Messages';
 $activePage = 'sent_history';
 
-// Calculate summary stats for the agent
-$stmt = $db->prepare("SELECT COUNT(*) FROM reminder_history WHERE status = 'sent' AND sent_by_user_id = ?");
-$stmt->execute([$agentId]);
-$totalSent = $stmt->fetchColumn();
+// Calculate summary stats across the agency network
+$statsWhere = "(r.sent_by_user_id = ? OR r.sent_by_user_id IN (SELECT id FROM users WHERE parent_agent_id = ?) OR c.agent_id = ? OR v.agent_id = ?)";
+$statsParams = [$userId, $userId, $effectiveAgentId, $effectiveAgentId];
 
-$stmt = $db->prepare("SELECT COUNT(*) FROM reminder_history WHERE status = 'failed' AND sent_by_user_id = ?");
-$stmt->execute([$agentId]);
-$totalFailed = $stmt->fetchColumn();
+$stmt = $db->prepare("
+    SELECT 
+        COUNT(CASE WHEN r.status = 'sent' THEN 1 END) as total_sent,
+        COUNT(CASE WHEN r.status = 'failed' THEN 1 END) as total_failed,
+        COUNT(CASE WHEN r.reminder_type = 'Insurance' THEN 1 END) as ins_reminders,
+        COUNT(CASE WHEN r.reminder_type = 'Pollution' THEN 1 END) as puc_reminders
+    FROM reminder_history r
+    LEFT JOIN customers c ON r.customer_id = c.id
+    LEFT JOIN vehicles v ON r.vehicle_id = v.id
+    WHERE $statsWhere
+");
+$stmt->execute($statsParams);
+$stats = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
-$stmt = $db->prepare("SELECT COUNT(*) FROM reminder_history WHERE reminder_type = 'Insurance' AND sent_by_user_id = ?");
-$stmt->execute([$agentId]);
-$insReminders = $stmt->fetchColumn();
-
-$stmt = $db->prepare("SELECT COUNT(*) FROM reminder_history WHERE reminder_type = 'Pollution' AND sent_by_user_id = ?");
-$stmt->execute([$agentId]);
-$pucReminders = $stmt->fetchColumn();
+$totalSent = (int)($stats['total_sent'] ?? 0);
+$totalFailed = (int)($stats['total_failed'] ?? 0);
+$insReminders = (int)($stats['ins_reminders'] ?? 0);
+$pucReminders = (int)($stats['puc_reminders'] ?? 0);
 
 include_once __DIR__ . '/../includes/header.php';
 ?>
@@ -94,7 +102,7 @@ include_once __DIR__ . '/../includes/header.php';
                 <tr>
                     <th>Sent Date</th>
                     <th>Customer Name</th>
-                    <th>Vehicle Details</th>
+                    <th>Vehicle / Policy</th>
                     <th>Notification Info</th>
                     <th>Message Details</th>
                     <th>Status</th>
@@ -102,20 +110,27 @@ include_once __DIR__ . '/../includes/header.php';
             </thead>
             <tbody>
                 <?php
-                // Fetch full reminder history joining customer, vehicle, and sender
+                // Fetch full reminder history joining customer, vehicle, and sender with LEFT JOINs
                 $stmt = $db->prepare("
-                    SELECT r.*, c.name as customer_name, c.mobile_number, v.vehicle_number
+                    SELECT r.*, 
+                           COALESCE(c.name, 'Customer') as customer_name, 
+                           COALESCE(c.mobile_number, c.whatsapp_number, 'N/A') as mobile_number, 
+                           COALESCE(v.vehicle_number, '') as vehicle_number,
+                           COALESCE(u.shop_name, u.username, 'Our Center') as sender_name
                     FROM reminder_history r
-                    JOIN customers c ON r.customer_id = c.id
-                    JOIN vehicles v ON r.vehicle_id = v.id
-                    WHERE r.sent_by_user_id = ?
+                    LEFT JOIN customers c ON r.customer_id = c.id
+                    LEFT JOIN vehicles v ON r.vehicle_id = v.id
+                    LEFT JOIN users u ON r.sent_by_user_id = u.id
+                    WHERE $statsWhere
                     ORDER BY r.id DESC
                 ");
-                $stmt->execute([$agentId]);
+                $stmt->execute($statsParams);
                 
                 while ($log = $stmt->fetch()):
                     $statusClass = ($log['status'] === 'sent') ? 'badge-active' : 'badge-suspended';
-                    $typeIcon = ($log['reminder_type'] === 'Insurance') ? 'fa-building-shield text-primary' : (($log['reminder_type'] === 'Pollution') ? 'fa-wind text-info' : 'fa-car text-warning');
+                    $typeIcon = ($log['reminder_type'] === 'Insurance') ? 'fa-building-shield text-primary' : (($log['reminder_type'] === 'Pollution') ? 'fa-wind text-info' : 'fa-heart-pulse text-danger');
+                    
+                    $vehDisplay = !empty($log['vehicle_number']) ? formatVehicleNumber($log['vehicle_number']) : (($log['reminder_type'] === 'Health') ? 'Health Policy' : 'N/A');
                 ?>
                     <tr>
                         <!-- Date -->
@@ -130,7 +145,10 @@ include_once __DIR__ . '/../includes/header.php';
                         </td>
                         <!-- Vehicle -->
                         <td>
-                            <strong class="text-primary d-block"><?php echo sanitize($log['vehicle_number']); ?></strong>
+                            <strong class="text-primary d-block"><?php echo sanitize($vehDisplay); ?></strong>
+                            <?php if (!empty($log['sender_name']) && $log['sender_name'] !== 'Our Center'): ?>
+                                <small class="text-muted" style="font-size: 0.72rem;"><i class="fa-solid fa-store me-1"></i><?php echo sanitize($log['sender_name']); ?></small>
+                            <?php endif; ?>
                         </td>
                         <!-- Notification type -->
                         <td>
@@ -143,7 +161,7 @@ include_once __DIR__ . '/../includes/header.php';
                         </td>
                         <!-- Message Snippet -->
                         <td>
-                            <p class="m-0 small text-muted text-truncate" style="max-width: 250px;" title="<?php echo sanitize($log['message']); ?>">
+                            <p class="m-0 small text-muted text-truncate" style="max-width: 250px; cursor: pointer;" title="<?php echo sanitize($log['message']); ?>">
                                 <?php echo sanitize($log['message']); ?>
                             </p>
                         </td>

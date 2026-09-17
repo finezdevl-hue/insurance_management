@@ -91,19 +91,25 @@ include_once __DIR__ . '/../includes/header.php';
             </thead>
             <tbody>
                 <?php
-                // Fetch full reminder history joining customer, vehicle, and sender
+                // Fetch full reminder history joining customer, vehicle, and sender with LEFT JOINs
                 $stmt = $db->query("
-                    SELECT r.*, c.name as customer_name, c.mobile_number, v.vehicle_number, u.username as sender_name, u.shop_name
+                    SELECT r.*, 
+                           COALESCE(c.name, 'Customer') as customer_name, 
+                           COALESCE(c.mobile_number, c.whatsapp_number, 'N/A') as mobile_number, 
+                           COALESCE(v.vehicle_number, '') as vehicle_number, 
+                           COALESCE(u.username, 'System') as sender_name, 
+                           COALESCE(u.shop_name, 'System') as shop_name
                     FROM reminder_history r
-                    JOIN customers c ON r.customer_id = c.id
-                    JOIN vehicles v ON r.vehicle_id = v.id
-                    JOIN users u ON r.sent_by_user_id = u.id
+                    LEFT JOIN customers c ON r.customer_id = c.id
+                    LEFT JOIN vehicles v ON r.vehicle_id = v.id
+                    LEFT JOIN users u ON r.sent_by_user_id = u.id
                     ORDER BY r.id DESC
                 ");
                 
                 while ($log = $stmt->fetch()):
                     $statusClass = ($log['status'] === 'sent') ? 'badge-active' : 'badge-suspended';
-                    $typeIcon = ($log['reminder_type'] === 'Insurance') ? 'fa-building-shield text-primary' : (($log['reminder_type'] === 'Pollution') ? 'fa-wind text-info' : 'fa-car text-warning');
+                    $typeIcon = ($log['reminder_type'] === 'Insurance') ? 'fa-building-shield text-primary' : (($log['reminder_type'] === 'Pollution') ? 'fa-wind text-info' : 'fa-heart-pulse text-danger');
+                    $vehDisplay = !empty($log['vehicle_number']) ? formatVehicleNumber($log['vehicle_number']) : (($log['reminder_type'] === 'Health') ? 'Health Policy' : 'N/A');
                 ?>
                     <tr>
                         <!-- Customer -->
@@ -113,7 +119,7 @@ include_once __DIR__ . '/../includes/header.php';
                         </td>
                         <!-- Vehicle -->
                         <td>
-                            <strong class="text-primary d-block"><?php echo sanitize($log['vehicle_number']); ?></strong>
+                            <strong class="text-primary d-block"><?php echo sanitize($vehDisplay); ?></strong>
                         </td>
                         <!-- Notification type -->
                         <td>
@@ -126,7 +132,7 @@ include_once __DIR__ . '/../includes/header.php';
                         </td>
                         <!-- Message Snippet -->
                         <td>
-                            <p class="m-0 small text-muted text-truncate" style="max-width: 250px;" title="<?php echo sanitize($log['message']); ?>">
+                            <p class="m-0 small text-muted text-truncate" style="max-width: 250px; cursor: pointer;" title="<?php echo sanitize($log['message']); ?>">
                                 <?php echo sanitize($log['message']); ?>
                             </p>
                         </td>
@@ -144,8 +150,8 @@ include_once __DIR__ . '/../includes/header.php';
                         <!-- Collapsible raw JSON response modal toggle -->
                         <td class="text-end">
                             <button type="button" class="btn btn-sm btn-light border show-api-btn" 
-                                    data-message="<?php echo sanitize($log['message']); ?>" 
-                                    data-response='<?php echo sanitize($log['api_response'] ?: "{}"); ?>'>
+                                    data-message="<?php echo htmlspecialchars($log['message'], ENT_QUOTES, 'UTF-8'); ?>" 
+                                    data-response='<?php echo htmlspecialchars($log['api_response'] ?: "{}", ENT_QUOTES, 'UTF-8'); ?>'>
                                 <i class="fa-solid fa-code"></i> Logs
                             </button>
                         </td>
