@@ -43,7 +43,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_vehicle'])) {
     $vehicleId = isset($_POST['id']) && !empty($_POST['id']) ? (int)$_POST['id'] : null;
     
-    $vehNumber = strtoupper(trim($_POST['vehicle_number'] ?? ''));
+    $vehNumber = formatVehicleNumber($_POST['vehicle_number'] ?? '');
     $ownerMobile = trim($_POST['owner_mobile'] ?? '');
     $ownerName = trim($_POST['owner_name'] ?? '');
     if (empty($ownerName)) $ownerName = 'Customer';
@@ -358,7 +358,8 @@ require_once __DIR__ . '/../includes/header.php';
                     <!-- 1. Vehicle & Owner Details -->
                     <div class="mb-3">
                         <label class="form-label font-weight-600 small text-dark mb-1">Vehicle Registration Number <span class="text-danger">*</span></label>
-                        <input type="text" name="vehicle_number" id="v_vehicle_number" class="form-control text-uppercase font-weight-700 mb-2" placeholder="e.g. MH02AB1234" required style="letter-spacing: 0.5px;">
+                        <input type="text" name="vehicle_number" id="v_vehicle_number" class="form-control text-uppercase font-weight-700 mb-1" placeholder="e.g. KL-07-A-1515, KL-05-AA-7090" required style="letter-spacing: 0.5px;">
+                        <small class="text-muted d-block mb-2" style="font-size: 0.72rem;">Format: e.g. KL-07-A-1515, KL-05-AA-7090</small>
 
                         <div class="row g-2">
                             <div class="col-6">

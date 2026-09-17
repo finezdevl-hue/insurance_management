@@ -332,6 +332,46 @@ function handleFileUpload($file, $subFolder, $allowedExtensions = ['jpg', 'jpeg'
 }
 
 /**
+ * Format Vehicle Registration Number into standard Indian format (e.g. KL-07-A-1515, KL-05-AA-7090)
+ * @param string $input
+ * @return string
+ */
+function formatVehicleNumber($input) {
+    if (empty($input)) {
+        return '';
+    }
+    
+    // Clean string to uppercase alphanumeric only
+    $cleaned = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', trim($input)));
+    
+    // Standard format with state code, RTO code, series letters (1-3 chars), and 1-4 digits
+    // e.g. KL 07 A 1515 -> KL-07-A-1515, KL 05 AA 7090 -> KL-05-AA-7090, DL 01 CAB 1234 -> DL-01-CAB-1234
+    if (preg_match('/^([A-Z]{2})(\d{1,2})([A-Z]{1,3})(\d{1,4})$/', $cleaned, $matches)) {
+        $state = $matches[1];
+        $rto = str_pad($matches[2], 2, '0', STR_PAD_LEFT);
+        $series = $matches[3];
+        $number = $matches[4];
+        return "{$state}-{$rto}-{$series}-{$number}";
+    }
+    
+    // Format without series letter: e.g. KL 07 1515 -> KL-07-1515
+    if (preg_match('/^([A-Z]{2})(\d{1,2})(\d{1,4})$/', $cleaned, $matches)) {
+        $state = $matches[1];
+        $rto = str_pad($matches[2], 2, '0', STR_PAD_LEFT);
+        $number = $matches[3];
+        return "{$state}-{$rto}-{$number}";
+    }
+    
+    // Bharat Series: 2 digits year, BH, 4 digits, 1-2 letters (e.g. 22 BH 1234 AA -> 22-BH-1234-AA)
+    if (preg_match('/^(\d{2})(BH)(\d{1,4})([A-Z]{1,2})$/', $cleaned, $matches)) {
+        return "{$matches[1]}-BH-{$matches[3]}-{$matches[4]}";
+    }
+    
+    // Fallback: Return uppercase string
+    return strtoupper(trim($input));
+}
+
+/**
  * Get Base Application URL (supports localhost subfolders, live domains, and CLI crons)
  * @return string
  */

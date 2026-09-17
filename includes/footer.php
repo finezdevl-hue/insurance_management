@@ -152,6 +152,55 @@
                     confirmButtonColor: '#3b82f6'
                 });
             <?php endif; ?>
+
+            // Auto-format Indian Vehicle Registration Number (e.g. KL-07-A-1515, KL-05-AA-7090)
+            function formatVehicleString(val) {
+                if (!val) return '';
+                let raw = val.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                if (!raw) return '';
+                
+                // 1. Full standard match: 2 letters + 1-2 digits + 1-3 letters + 1-4 digits
+                let m1 = raw.match(/^([A-Z]{2})(\d{1,2})([A-Z]{1,3})(\d{1,4})$/);
+                if (m1) {
+                    let rto = m1[2].length === 1 ? '0' + m1[2] : m1[2];
+                    return m1[1] + '-' + rto + '-' + m1[3] + '-' + m1[4];
+                }
+                
+                // 2. Full match without series: 2 letters + 1-2 digits + 1-4 digits
+                let m2 = raw.match(/^([A-Z]{2})(\d{1,2})(\d{1,4})$/);
+                if (m2) {
+                    let rto = m2[2].length === 1 ? '0' + m2[2] : m2[2];
+                    return m2[1] + '-' + rto + '-' + m2[3];
+                }
+                
+                // 3. Bharat series match: 2 digits + BH + 4 digits + 1-2 letters
+                let m3 = raw.match(/^(\d{2})(BH)(\d{1,4})([A-Z]{1,2})$/);
+                if (m3) {
+                    return m3[1] + '-BH-' + m3[3] + '-' + m3[4];
+                }
+                
+                // 4. Progressive typing match (as user types)
+                let p = raw.match(/^([A-Z]{2})(\d{1,2})?([A-Z]{1,3})?(\d{1,4})?$/);
+                if (p) {
+                    let parts = [p[1]];
+                    if (p[2]) parts.push(p[2]);
+                    if (p[3]) parts.push(p[3]);
+                    if (p[4]) parts.push(p[4]);
+                    return parts.join('-');
+                }
+                
+                return raw;
+            }
+
+            $(document).on('input', 'input[name="vehicle_number"], input#vehicle_number, input#v_vehicle_number, .vehicle-number-input', function() {
+                this.value = formatVehicleString(this.value);
+            });
+
+            $(document).on('blur', 'input[name="vehicle_number"], input#vehicle_number, input#v_vehicle_number, .vehicle-number-input', function() {
+                if (this.value) {
+                    this.value = formatVehicleString(this.value);
+                }
+            });
         });
     </script>
 </body>

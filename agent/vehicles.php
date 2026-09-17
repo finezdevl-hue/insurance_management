@@ -53,7 +53,7 @@ if ($action === 'save_vehicle' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $vehicleId = isset($_POST['id']) ? (int)$_POST['id'] : null;
     $custId = $_POST['customer_id'];
     
-    $vehNumber = strtoupper(trim($_POST['vehicle_number'] ?? ''));
+    $vehNumber = formatVehicleNumber($_POST['vehicle_number'] ?? '');
     $ownerMobile = trim($_POST['owner_mobile'] ?? '');
     $ownerName = trim($_POST['owner_name'] ?? '');
     if (empty($ownerName)) {
@@ -320,7 +320,7 @@ if ($action === 'import_csv_pollution' && $_SERVER['REQUEST_METHOD'] === 'POST')
             }
             $custName = trim($row['customer_name'] ?? '');
             $custMobile = trim($row['customer_mobile'] ?? '');
-            $vehNumber = strtoupper(trim($row['vehicle_number'] ?? ''));
+            $vehNumber = formatVehicleNumber($row['vehicle_number'] ?? '');
             $certNum = trim($row['certificate_number'] ?? '');
             $startDate = trim($row['start_date'] ?? '');
             $expiryDate = trim($row['expiry_date'] ?? '');
@@ -403,7 +403,7 @@ if ($action === 'import_csv_insurance' && $_SERVER['REQUEST_METHOD'] === 'POST')
             }
             $custName = trim($row['customer_name'] ?? '');
             $custMobile = trim($row['customer_mobile'] ?? '');
-            $vehNumber = strtoupper(trim($row['vehicle_number'] ?? ''));
+            $vehNumber = formatVehicleNumber($row['vehicle_number'] ?? '');
             $insComp = trim($row['insurance_company'] ?? '');
             $policyNum = trim($row['policy_number'] ?? '');
             $insType = trim($row['insurance_type'] ?? '');
@@ -835,7 +835,8 @@ include_once __DIR__ . '/../includes/header.php';
                         <div class="row g-3 mb-4">
                             <div class="col-12 col-md-4">
                                 <label for="vehicle_number" class="form-label font-weight-600">Vehicle Registration Number <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="vehicle_number" name="vehicle_number" required value="<?php echo ($isEdit && isset($vh['vehicle_number'])) ? sanitize($vh['vehicle_number']) : ''; ?>" placeholder="e.g. MH02AB1234">
+                                <input type="text" class="form-control text-uppercase font-weight-600" id="vehicle_number" name="vehicle_number" required value="<?php echo ($isEdit && isset($vh['vehicle_number'])) ? sanitize($vh['vehicle_number']) : ''; ?>" placeholder="e.g. KL-07-A-1515, KL-05-AA-7090" style="letter-spacing: 0.5px;">
+                                <div class="form-text text-muted" style="font-size: 0.75rem;">Format: e.g. KL-07-A-1515, KL-05-AA-7090</div>
                             </div>
                             <div class="col-12 col-md-4">
                                 <label for="owner_mobile" class="form-label font-weight-600">Phone Number <span class="text-danger">*</span></label>

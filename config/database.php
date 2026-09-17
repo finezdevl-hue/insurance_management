@@ -310,8 +310,32 @@ function ensureRuntimeSchema(PDO $pdo) {
             // Ignore
         }
 
+        // 5. Normalize existing unformatted vehicle registration numbers (e.g. KL17S1515 -> KL-17-S-1515)
+        try {
+            $stmtUnf = $pdo->query("SELECT id, vehicle_number FROM vehicles WHERE vehicle_number NOT LIKE '%-%' LIMIT 100");
+            $unfVehs = $stmtUnf->fetchAll(PDO::FETCH_ASSOC);
+            if (!empty($unfVehs)) {
+                $stmtUpdVeh = $pdo->prepare("UPDATE vehicles SET vehicle_number = ? WHERE id = ?");
+                foreach ($unfVehs as $uv) {
+                    $raw = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', trim($uv['vehicle_number'])));
+                    $formatted = null;
+                    if (preg_match('/^([A-Z]{2})(\d{1,2})([A-Z]{1,3})(\d{1,4})$/', $raw, $m)) {
+                        $formatted = "{$m[1]}-" . str_pad($m[2], 2, '0', STR_PAD_LEFT) . "-{$m[3]}-{$m[4]}";
+                    } elseif (preg_match('/^([A-Z]{2})(\d{1,2})(\d{1,4})$/', $raw, $m)) {
+                        $formatted = "{$m[1]}-" . str_pad($m[2], 2, '0', STR_PAD_LEFT) . "-{$m[3]}";
+                    } elseif (preg_match('/^(\d{2})(BH)(\d{1,4})([A-Z]{1,2})$/', $raw, $m)) {
+                        $formatted = "{$m[1]}-BH-{$m[3]}-{$m[4]}";
+                    }
+                    if ($formatted && $formatted !== $uv['vehicle_number']) {
+                        try {
+                            $stmtUpdVeh->execute([$formatted, $uv['id']]);
+                        } catch (Throwable $e) {}
+                    }
+                }
+            }
+        } catch (Throwable $e) {}
     } catch (Throwable $e) {
-        // Keep app usable even if migration could not be applied
+        // Suppress runtime schema errors
     }
 
     $running = false;
