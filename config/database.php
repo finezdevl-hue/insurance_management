@@ -4,8 +4,18 @@
  * Vehicle Details & Insurance Renewal Management System
  */
 
-// Include Logger Engine first so all subsequent errors & queries are tracked
-require_once __DIR__ . '/../includes/logger.php';
+// Include Logger Engine if present so all subsequent errors & queries are tracked
+if (file_exists(__DIR__ . '/../includes/logger.php')) {
+    require_once __DIR__ . '/../includes/logger.php';
+} else {
+    if (!function_exists('logDatabaseQuery')) { function logDatabaseQuery($sql, $params = [], $durationMs = 0, $error = null) {} }
+    if (!function_exists('logSystemError')) { function logSystemError($level, $message, $file = '', $line = 0, $trace = null) {} }
+    if (!function_exists('renderFriendlyErrorPage')) {
+        function renderFriendlyErrorPage($message, $file = '', $line = 0) {
+            echo "<div style='font-family:sans-serif;padding:30px;max-width:700px;margin:50px auto;border:1px solid #f5c2c7;background:#f8d7da;color:#842029;border-radius:8px;'><h3>System Error</h3><p>" . nl2br(htmlspecialchars($message)) . "</p></div>";
+        }
+    }
+}
 
 // Database configuration constants (Change these for production hosting)
 if (!defined('DB_HOST')) define('DB_HOST', getenv('DB_HOST') ?: 'localhost');

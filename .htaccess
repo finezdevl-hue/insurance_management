@@ -3,13 +3,10 @@
     DirectoryIndex index.php index.html
 </IfModule>
 
-# Disable Directory Browsing
-Options -Indexes
-
 # UTF-8 Encoding
 AddDefaultCharset UTF-8
 
-# Protect Sensitive Directories & Files
+# Protect Sensitive Files
 <FilesMatch "^\.(htaccess|htpasswd|ini|env|log)$">
     <IfModule authz_core_module>
         Require all denied
@@ -19,16 +16,3 @@ AddDefaultCharset UTF-8
     </IfModule>
 </FilesMatch>
 
-# PHP Error Logging Directives (Production Safe)
-<IfModule mod_php.c>
-    php_flag log_errors on
-    php_value error_log "logs/error.log"
-</IfModule>
-<IfModule mod_php7.c>
-    php_flag log_errors on
-    php_value error_log "logs/error.log"
-</IfModule>
-<IfModule mod_php8.c>
-    php_flag log_errors on
-    php_value error_log "logs/error.log"
-</IfModule>
