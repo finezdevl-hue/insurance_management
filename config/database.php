@@ -311,8 +311,8 @@ if (session_status() === PHP_SESSION_NONE) {
     // 1. Ensure local dedicated writable session directory exists
     $localSessionDir = __DIR__ . '/../sessions';
     if (!is_dir($localSessionDir)) {
-        @mkdir($localSessionDir, 0777, true);
-        @file_put_contents($localSessionDir . '/.htaccess', "Require all denied\n");
+        @mkdir($localSessionDir, 0755, true);
+        @file_put_contents($localSessionDir . '/index.html', '<!DOCTYPE html><html><head><title>403</title></head><body>Directory access is forbidden.</body></html>');
     }
     if (is_dir($localSessionDir) && is_writable($localSessionDir)) {
         @ini_set('session.save_path', $localSessionDir);
