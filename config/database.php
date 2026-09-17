@@ -308,18 +308,7 @@ function ensureRuntimeSchema(PDO $pdo) {
 
 // Configure session settings before starting session
 if (session_status() === PHP_SESSION_NONE) {
-    // 1. Ensure local dedicated writable session directory exists
-    $localSessionDir = __DIR__ . '/../sessions';
-    if (!is_dir($localSessionDir)) {
-        @mkdir($localSessionDir, 0755, true);
-        @file_put_contents($localSessionDir . '/index.html', '<!DOCTYPE html><html><head><title>403</title></head><body>Directory access is forbidden.</body></html>');
-    }
-    if (is_dir($localSessionDir) && is_writable($localSessionDir)) {
-        @ini_set('session.save_path', $localSessionDir);
-        @session_save_path($localSessionDir);
-    }
-
-    // 2. Cookie & session parameters
+    // Standard session and cookie parameters
     ini_set('session.cookie_path', '/');
     ini_set('session.cookie_httponly', '1');
     ini_set('session.use_only_cookies', '1');
@@ -343,7 +332,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
     @session_start();
 
-    // Prevent Cloudways Varnish / Nginx caching from serving stale redirects or cached pages
+    // Prevent Cloudways Varnish / Nginx from caching dynamic PHP pages
     if (!headers_sent()) {
         header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0, private");
         header("Pragma: no-cache");
