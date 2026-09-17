@@ -45,11 +45,21 @@ $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" 
         <table>
             <tr>
                 <th>Session Counter</th>
-                <td><strong style="font-size: 18px; color: #059669;"><?php echo $_SESSION['test_counter']; ?></strong> (Refreshes: <?php echo $_SESSION['test_counter']; ?>)</td>
+                <td><strong style="font-size: 20px; color: #059669;"><?php echo $_SESSION['test_counter']; ?></strong></td>
             </tr>
             <tr>
-                <th>Session ID</th>
+                <th>Active Session ID</th>
                 <td><code><?php echo htmlspecialchars($sessionId); ?></code></td>
+            </tr>
+            <tr>
+                <th>Received PHPSESSID Cookie</th>
+                <td>
+                    <?php if (isset($_COOKIE['PHPSESSID'])): ?>
+                        <span class="badge badge-success">RECEIVED: <?php echo htmlspecialchars($_COOKIE['PHPSESSID']); ?></span>
+                    <?php else: ?>
+                        <span class="badge badge-danger">NONE (Browser is not sending session cookie back!)</span>
+                    <?php endif; ?>
+                </td>
             </tr>
             <tr>
                 <th>Session Save Path</th>
@@ -66,8 +76,8 @@ $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" 
                 </td>
             </tr>
             <tr>
-                <th>Cookie Lifetime</th>
-                <td><?php echo $cookieParams['lifetime']; ?> seconds</td>
+                <th>Protocol (HTTPS / HTTP)</th>
+                <td><?php echo (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'HTTPS' : 'HTTP (Plain)'; ?></td>
             </tr>
             <tr>
                 <th>Cookie Path</th>

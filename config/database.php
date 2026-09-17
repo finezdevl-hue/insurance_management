@@ -308,16 +308,27 @@ function ensureRuntimeSchema(PDO $pdo) {
 
 // Configure session settings before starting session
 if (session_status() === PHP_SESSION_NONE) {
+    // 1. Ensure local dedicated writable session directory exists
+    $localSessionDir = __DIR__ . '/../sessions';
+    if (!is_dir($localSessionDir)) {
+        @mkdir($localSessionDir, 0777, true);
+        @file_put_contents($localSessionDir . '/.htaccess', "Require all denied\n");
+    }
+    if (is_dir($localSessionDir) && is_writable($localSessionDir)) {
+        @ini_set('session.save_path', $localSessionDir);
+        @session_save_path($localSessionDir);
+    }
+
+    // 2. Cookie & session parameters
     ini_set('session.cookie_path', '/');
     ini_set('session.cookie_httponly', '1');
     ini_set('session.use_only_cookies', '1');
     ini_set('session.gc_maxlifetime', '2592000'); // 30 days
 
-    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
-               (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ||
+    $isHttps = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off') ||
+               (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') ||
                (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
 
-    // Set cookie parameters to root path '/' so session is preserved across /admin, /agent, and /mobile
     if (PHP_VERSION_ID >= 70300) {
         session_set_cookie_params([
             'lifetime' => 86400 * 30, // 30 days
