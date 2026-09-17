@@ -106,6 +106,9 @@
                         <a href="../admin/settings.php" class="list-group-item list-group-item-action py-3 border-0 rounded-3 mb-1 text-dark fw-500">
                             <i class="fa-solid fa-gears me-3 text-primary"></i> System Settings
                         </a>
+                        <a href="../admin/logs.php" class="list-group-item list-group-item-action py-3 border-0 rounded-3 mb-1 text-dark fw-500">
+                            <i class="fa-solid fa-bug me-3 text-primary"></i> System & Query Logs
+                        </a>
                     <?php else: ?>
                         <a href="../agent/index.php" class="list-group-item list-group-item-action py-3 border-0 rounded-3 mb-1 text-dark fw-500">
                             <i class="fa-solid fa-gauge-high me-3 text-success"></i> Agency Dashboard

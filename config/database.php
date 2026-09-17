@@ -306,8 +306,13 @@ function ensureRuntimeSchema(PDO $pdo) {
     $running = false;
 }
 
-// Start PHP session globally with proper domain-wide cookie settings
+// Configure session settings before starting session
 if (session_status() === PHP_SESSION_NONE) {
+    ini_set('session.cookie_path', '/');
+    ini_set('session.cookie_httponly', '1');
+    ini_set('session.use_only_cookies', '1');
+    ini_set('session.gc_maxlifetime', '2592000'); // 30 days
+
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
                (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ||
                (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
@@ -317,13 +322,12 @@ if (session_status() === PHP_SESSION_NONE) {
         session_set_cookie_params([
             'lifetime' => 86400 * 30, // 30 days
             'path'     => '/',
-            'domain'   => '',
             'secure'   => $isHttps,
             'httponly' => true,
             'samesite' => 'Lax'
         ]);
     } else {
-        session_set_cookie_params(86400 * 30, '/', '', $isHttps, true);
+        session_set_cookie_params(86400 * 30, '/', null, $isHttps, true);
     }
 
     @session_start();

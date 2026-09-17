@@ -933,9 +933,15 @@ function handleMobileAutoRedirect() {
     if (isMobileDevice()) {
         $page = basename($scriptPath);
         if (strpos($scriptPath, '/agent/') !== false) {
-            redirect('../mobile/agent/' . $page);
+            $mobileFile = __DIR__ . '/../mobile/agent/' . $page;
+            if (file_exists($mobileFile)) {
+                redirect('../mobile/agent/' . $page);
+            }
         } elseif (strpos($scriptPath, '/admin/') !== false) {
-            redirect('../mobile/admin/' . $page);
+            $mobileFile = __DIR__ . '/../mobile/admin/' . $page;
+            if (file_exists($mobileFile)) {
+                redirect('../mobile/admin/' . $page);
+            }
         }
     }
 }
