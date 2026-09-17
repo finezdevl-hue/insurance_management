@@ -150,16 +150,19 @@ foreach ($agents as $agent) {
         }
         
         // Prevent duplicate dispatch for same policy in the same cycle/period
-        $stmtCheck = $db->prepare("
-            SELECT id FROM reminder_history 
-            WHERE customer_id = ? AND vehicle_id <=> ? AND reminder_type = ? AND reminder_period = ? 
-            AND DATEDIFF(CURDATE(), sent_date) < 60
-        ");
-        $stmtCheck->execute([$rem['customer_id'], $rem['vehicle_id'], $rem['type'], $rem['period']]);
-        if ($stmtCheck->fetchColumn()) {
-            echo " - Already sent {$rem['type']} ({$rem['period']}) to {$rem['name']}. Skipping.\n";
-            $stats['skipped']++;
-            continue;
+        $isForce = (isset($_GET['force']) && $_GET['force'] == '1') || (in_array('--force', $argv ?? []));
+        if (!$isForce) {
+            $stmtCheck = $db->prepare("
+                SELECT id FROM reminder_history 
+                WHERE customer_id = ? AND vehicle_id <=> ? AND reminder_type = ? AND reminder_period = ? 
+                AND DATEDIFF(CURDATE(), sent_date) < 60
+            ");
+            $stmtCheck->execute([$rem['customer_id'], $rem['vehicle_id'], $rem['type'], $rem['period']]);
+            if ($stmtCheck->fetchColumn()) {
+                echo " - Already sent {$rem['type']} ({$rem['period']}) to {$rem['name']}. Skipping.\n";
+                $stats['skipped']++;
+                continue;
+            }
         }
         
         $targetShopId = !empty($rem['created_by_shop_id']) ? (int)$rem['created_by_shop_id'] : $agentId;
