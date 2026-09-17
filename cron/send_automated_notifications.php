@@ -2,34 +2,21 @@
 /**
  * Automated Notification Script (Cron Job)
  * Vehicle Details & Insurance Renewal Management System
- * Run this script daily via cron or Windows Task Scheduler.
+ * Run this script via server crontab (e.g., 5 times a day) or CLI / Webhook.
  */
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/functions.php';
 
-// Since this is a cron script, it should be runnable from CLI, or with ?run_cron=1, or by an active Admin
+// Allow running from CLI, or with ?run_cron=1, or by an active Admin
 $isAdminUser = isLoggedIn() && hasRole('admin');
 if (php_sapi_name() !== 'cli' && !isset($_GET['run_cron']) && !$isAdminUser) {
-    die('This script can only be run from the command line, with a valid cron trigger, or by an authenticated administrator.');
+    die('This script can only be run from the command line, via server cron, or by an authenticated administrator.');
 }
 
 $db = getDBConnection();
-$sysSettings = getSystemSettings();
-$forceRun = (isset($_GET['force']) && $_GET['force'] == 1) || (isset($_POST['force']) && $_POST['force'] == 1);
 
-// Check if automated messaging is enabled globally in settings
-if (!$forceRun && isset($sysSettings['auto_notifications_enabled']) && (int)$sysSettings['auto_notifications_enabled'] === 0) {
-    $msg = "Automated WhatsApp notifications are currently disabled in Site Settings.";
-    if (isset($_GET['redirect'])) {
-        $_SESSION['alert_error'] = $msg;
-        redirect('../' . ltrim($_GET['redirect'], '/'));
-    }
-    echo $msg . "\n";
-    exit;
-}
-
-echo "Starting Automated Notifications (Scheduled Dispatch Time: " . ($sysSettings['notification_send_time'] ?? '09:00') . ")...\n";
+echo "Starting Automated WhatsApp Renewal Notifications Dispatch...\n";
 
 $stats = [
     'total_processed' => 0,
@@ -58,7 +45,7 @@ foreach ($agents as $agent) {
     $is1DayEnabled = $agent['notify_1day_before_enabled'] ?? 1;
     $isAfterEnabled = $agent['notify_after_expiry_enabled'] ?? 1;
     
-    // We will collect all reminders to send
+    // Collect all reminders to send for this agent
     $remindersToSend = [];
     
     $checkTargets = [];
@@ -96,7 +83,7 @@ foreach ($agents as $agent) {
             }
         }
         
-        // 2. Pollution Certificates
+        // 2. Pollution Certificates (PUC)
         if (!empty($agent['access_pollution'])) {
             $stmt = $db->prepare("
                 SELECT p.id as cert_id, p.expiry_date, v.id as vehicle_id, v.vehicle_number,
@@ -148,11 +135,11 @@ foreach ($agents as $agent) {
         }
     }
     
-    // Send Reminders
+    // Process and Send Reminders
     foreach ($remindersToSend as $rem) {
         $stats['total_processed']++;
         
-        // Double check balance
+        // Check balance
         $agentStmt = $db->prepare("SELECT message_balance FROM users WHERE id = ?");
         $agentStmt->execute([$agentId]);
         $currentBalance = (int)$agentStmt->fetchColumn();
@@ -162,7 +149,7 @@ foreach ($agents as $agent) {
             break;
         }
         
-        // Check if we already sent this exact reminder type and period to this customer/vehicle
+        // Prevent duplicate dispatch for same policy in the same cycle/period
         $stmtCheck = $db->prepare("
             SELECT id FROM reminder_history 
             WHERE customer_id = ? AND vehicle_id <=> ? AND reminder_type = ? AND reminder_period = ? 
@@ -183,7 +170,7 @@ foreach ($agents as $agent) {
             continue;
         }
         
-        // Compose message with specific shop details
+        // Compose message with shop details
         $shopInfo = getShopDetailsForReminder($rem['vehicle_id'], $rem['type'], $agentId);
         $shopName = $shopInfo['shop_name'];
         $shopAddress = $shopInfo['shop_address'];
@@ -201,10 +188,10 @@ foreach ($agents as $agent) {
         // Send WhatsApp
         $result = sendWhatsAppMessage($rem['whatsapp'], $message, $rem['name'], $rem['vehicle_number'], $rem['expiry'], $shopMobile, $centersUrl);
         
-        // Deduct balance from target shop outlet
+        // Deduct message balance
         deductAgentMessages($targetShopId, 1);
         
-        // Log to history
+        // Log to reminder history
         $stmtLog = $db->prepare("
             INSERT INTO reminder_history (customer_id, vehicle_id, reminder_type, reminder_period, sent_by_user_id, status, message, api_response)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -231,17 +218,10 @@ foreach ($agents as $agent) {
     }
 }
 
-// Update last execution time in settings table
-try {
-    $db->exec("UPDATE settings SET last_cron_run_at = NOW() WHERE id = (SELECT id FROM (SELECT id FROM settings ORDER BY id DESC LIMIT 1) as t)");
-} catch (PDOException $e) {
-    // Ignore error
-}
-
-echo "Automated Notifications Completed. Sent: {$stats['sent']}, Failed: {$stats['failed']}, Skipped: {$stats['skipped']}.\n";
+echo "Automated Notifications Finished. Sent: {$stats['sent']}, Failed: {$stats['failed']}, Skipped: {$stats['skipped']}.\n";
 
 if (isset($_GET['redirect'])) {
-    $_SESSION['alert_success'] = "Automated WhatsApp Reminders dispatched successfully! [Sent: {$stats['sent']}, Failed: {$stats['failed']}, Skipped: {$stats['skipped']}]";
+    $_SESSION['alert_success'] = "Automated WhatsApp Reminders processed! [Sent: {$stats['sent']}, Failed: {$stats['failed']}, Skipped: {$stats['skipped']}]";
     redirect('../' . ltrim($_GET['redirect'], '/'));
 }
 ?>
