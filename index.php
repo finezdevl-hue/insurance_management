@@ -399,32 +399,6 @@ try {
             margin: 0;
         }
 
-        .role-chips {
-            display: flex;
-            align-items: center;
-            gap: 0.35rem;
-            margin-top: 0.65rem;
-            flex-wrap: wrap;
-        }
-
-        .role-chip {
-            font-size: 0.68rem;
-            font-weight: 600;
-            padding: 0.2rem 0.55rem;
-            border-radius: 50px;
-            background: #f1f5f9;
-            color: #475569;
-            border: 1px solid #e2e8f0;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3rem;
-        }
-
-        .role-chip i {
-            color: #10b981;
-            font-size: 0.7rem;
-        }
-
         /* Inputs */
         .form-group-wrap {
             margin-bottom: 0.9rem;
@@ -690,12 +664,6 @@ try {
             <div class="login-box-header">
                 <h2 class="login-box-title">Welcome Back</h2>
                 <p class="login-box-subtitle">Sign in to access your administrative agency portal.</p>
-                
-                <div class="role-chips">
-                    <span class="role-chip"><i class="fa-solid fa-user-gear"></i> Super Admin</span>
-                    <span class="role-chip"><i class="fa-solid fa-user-tie"></i> Agency Partner</span>
-                    <span class="role-chip"><i class="fa-solid fa-store"></i> Testing Center</span>
-                </div>
             </div>
 
             <?php if (!empty($error)): ?>
