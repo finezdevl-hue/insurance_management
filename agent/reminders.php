@@ -50,17 +50,23 @@ if (isset($_POST['send_single_alert'])) {
         $whatsapp = $customer['whatsapp_number'];
         // Fetch specific creator shop or parent agent details for this reminder
         $shopInfo = getShopDetailsForReminder($vehicleId, $remType, $agentId);
-        $agentMobile = $shopInfo['mobile_number'];
+        $shopName = $shopInfo['shop_name'];
         $shopAddress = $shopInfo['shop_address'];
-        $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
+        $agentMobile = $shopInfo['mobile_number'];
+        $centersUrl = $shopInfo['centers_link'];
+        
+        $centerLocationText = $shopName;
+        if (!empty($shopAddress) && $shopAddress !== $shopName && $shopAddress !== 'our testing center') {
+            $centerLocationText .= ' (' . $shopAddress . ')';
+        }
         
         if ($remType === 'Pollution') {
-            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease visit our testing center at {$shopAddress} (Phone: {$agentMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
+            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease visit our testing center at {$centerLocationText} (Phone: {$agentMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
         } else {
             $message = "Dear Customer,\n\nThis is an important reminder that the {$remType} for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease contact us at {$agentMobile} to process your renewal and ensure continuous validity.\n\nView Testing Centers & Details:\n{$centersUrl}";
         }
         
-        $apiResult = sendWhatsAppMessage($whatsapp, $message, $name, $vehNumber, $expiryVal, $agentMobile, $centersUrl);
+        $apiResult = sendWhatsAppMessage($whatsapp, $message, $shopName, $vehNumber, $expiryVal, $agentMobile, $centersUrl);
         $status = $apiResult['success'] ? 'sent' : 'failed';
         
         $daysUntil = getDaysUntil($expiryVal);
@@ -140,18 +146,24 @@ if (isset($_POST['send_bulk_alerts'])) {
         $expiryVal = $rec['expiry_date'];
         
         // Fetch specific creator shop or parent agent details for this reminder
-        $shopInfo = getShopDetailsForReminder($vehicleId, $remType, $agentId);
-        $agentMobile = $shopInfo['mobile_number'];
+        $shopInfo = getShopDetailsForReminder($rec['vehicle_id'], $remType, $agentId);
+        $shopName = $shopInfo['shop_name'];
         $shopAddress = $shopInfo['shop_address'];
-        $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
+        $agentMobile = $shopInfo['mobile_number'];
+        $centersUrl = $shopInfo['centers_link'];
+        
+        $centerLocationText = $shopName;
+        if (!empty($shopAddress) && $shopAddress !== $shopName && $shopAddress !== 'our testing center') {
+            $centerLocationText .= ' (' . $shopAddress . ')';
+        }
         
         if ($remType === 'Pollution') {
-            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease visit our testing center at {$shopAddress} (Phone: {$agentMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
+            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease visit our testing center at {$centerLocationText} (Phone: {$agentMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
         } else {
             $message = "Dear Customer,\n\nThis is an important reminder that the {$remType} for your vehicle {$vehNumber} is expiring on {$expiryVal}.\n\nPlease contact us at {$agentMobile} to process your renewal and ensure continuous validity.\n\nView Testing Centers & Details:\n{$centersUrl}";
         }
         
-        $apiResult = sendWhatsAppMessage($whatsapp, $message, $name, $vehNumber, $expiryVal, $agentMobile, $centersUrl);
+        $apiResult = sendWhatsAppMessage($whatsapp, $message, $shopName, $vehNumber, $expiryVal, $agentMobile, $centersUrl);
         $status = $apiResult['success'] ? 'sent' : 'failed';
         
         if ($apiResult['success']) {

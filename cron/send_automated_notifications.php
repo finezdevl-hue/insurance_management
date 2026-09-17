@@ -178,18 +178,23 @@ foreach ($agents as $agent) {
         $shopName = $shopInfo['shop_name'];
         $shopAddress = $shopInfo['shop_address'];
         $shopMobile = $shopInfo['mobile_number'];
-        $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
+        $centersUrl = $shopInfo['centers_link'];
         
-        if ($rem['type'] === 'Pollution') {
-            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$rem['vehicle_number']} is expiring on {$rem['expiry']}.\n\nPlease visit our testing center at {$shopAddress} (Phone: {$shopMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
-        } elseif ($rem['period'] == '-1 Day') {
-            $message = "Dear Customer,\n\nURGENT: Your {$rem['type']} for vehicle {$rem['vehicle_number']} expired yesterday ({$rem['expiry']}). Please renew it immediately to avoid penalties. Contact: {$shopMobile}.\n\nView Testing Centers:\n{$centersUrl}";
-        } else {
-            $message = "Dear Customer,\n\nYour {$rem['type']} for vehicle {$rem['vehicle_number']} will expire on {$rem['expiry']}. Please renew it to stay protected. Contact: {$shopMobile}.\n\nView Testing Centers:\n{$centersUrl}";
+        $centerLocationText = $shopName;
+        if (!empty($shopAddress) && $shopAddress !== $shopName && $shopAddress !== 'our testing center') {
+            $centerLocationText .= ' (' . $shopAddress . ')';
         }
         
-        // Send WhatsApp
-        $result = sendWhatsAppMessage($rem['whatsapp'], $message, $rem['name'], $rem['vehicle_number'], $rem['expiry'], $shopMobile, $centersUrl);
+        if ($rem['type'] === 'Pollution') {
+            $message = "Dear Customer,\n\nThis is to remind you that the Pollution Certificate (PUC) for your vehicle {$rem['vehicle_number']} is expiring on {$rem['expiry']}.\n\nPlease visit our testing center at {$centerLocationText} (Phone: {$shopMobile}) to renew it and avoid penalties.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
+        } elseif ($rem['period'] == '-1 Day') {
+            $message = "Dear Customer,\n\nURGENT: Your {$rem['type']} for vehicle {$rem['vehicle_number']} expired yesterday ({$rem['expiry']}). Please renew it immediately at {$shopName} to avoid penalties. Contact: {$shopMobile}.\n\nView Testing Centers:\n{$centersUrl}";
+        } else {
+            $message = "Dear Customer,\n\nYour {$rem['type']} for vehicle {$rem['vehicle_number']} will expire on {$rem['expiry']}. Please renew it to stay protected. Contact {$shopName}: {$shopMobile}.\n\nView Testing Centers:\n{$centersUrl}";
+        }
+        
+        // Send WhatsApp (pass $shopName as parameter 3 for template {{3}})
+        $result = sendWhatsAppMessage($rem['whatsapp'], $message, $shopName, $rem['vehicle_number'], $rem['expiry'], $shopMobile, $centersUrl);
         
         // Deduct message balance
         deductAgentMessages($targetShopId, 1);

@@ -23,6 +23,17 @@ if (!defined('DB_USER')) define('DB_USER', getenv('DB_USER') ?: 'root');
 if (!defined('DB_PASS')) define('DB_PASS', getenv('DB_PASS') !== false ? getenv('DB_PASS') : '');
 if (!defined('DB_NAME')) define('DB_NAME', getenv('DB_NAME') ?: 'vehicle_manage');
 
+// Site URL constant (Auto-detected or default to production alert.finez.in)
+if (!defined('SITE_URL')) {
+    if (getenv('SITE_URL')) {
+        define('SITE_URL', rtrim(getenv('SITE_URL'), '/'));
+    } elseif (isset($_SERVER['HTTP_HOST']) && (strpos($_SERVER['HTTP_HOST'], 'localhost') !== false || strpos($_SERVER['HTTP_HOST'], '127.0.0.1') !== false)) {
+        define('SITE_URL', 'http://localhost/vehicle_manage');
+    } else {
+        define('SITE_URL', 'https://alert.finez.in');
+    }
+}
+
 // For Live Production Server (e.g. alert.finez.in):
 // define('DB_HOST', 'localhost');
 // define('DB_USER', 'xmynywjyjd');

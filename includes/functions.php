@@ -332,12 +332,40 @@ function handleFileUpload($file, $subFolder, $allowedExtensions = ['jpg', 'jpeg'
 }
 
 /**
+ * Get Base Application URL (supports localhost subfolders, live domains, and CLI crons)
+ * @return string
+ */
+function getBaseUrl() {
+    if (defined('SITE_URL') && !empty(SITE_URL)) {
+        return rtrim(SITE_URL, '/');
+    }
+    
+    // Fallback for CLI or when HTTP_HOST is missing
+    if (php_sapi_name() === 'cli' || empty($_SERVER['HTTP_HOST'])) {
+        return 'https://alert.finez.in';
+    }
+    
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') 
+            || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+            || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
+            
+    $protocol = $isHttps ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'];
+    
+    if (strpos($host, 'localhost') !== false || strpos($host, '127.0.0.1') !== false) {
+        return $protocol . '://' . $host . '/vehicle_manage';
+    }
+    
+    return $protocol . '://' . $host;
+}
+
+/**
  * Resolve shop contact details (address and mobile) for compiling WhatsApp reminders.
  * Prefers the specific Shop outlet that created the vehicle/certificate, with fallback to parent agent.
  * @param int|null $vehicleId
  * @param string $remType ('Pollution', 'Insurance', 'Health', etc.)
  * @param int $agentId
- * @return array ('shop_name' => string, 'shop_address' => string, 'mobile_number' => string)
+ * @return array ('shop_name' => string, 'shop_address' => string, 'mobile_number' => string, 'centers_link' => string)
  */
 function getShopDetailsForReminder($vehicleId, $remType, $agentId) {
     $db = getDBConnection();
@@ -361,34 +389,55 @@ function getShopDetailsForReminder($vehicleId, $remType, $agentId) {
         }
     }
     
-    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? "https" : "http";
-    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $centersLink = "$protocol://$host/vehicle_manage/centers.php?agent_id=$agentId";
+    $baseUrl = getBaseUrl();
+    $centersLink = $baseUrl . '/centers.php?agent_id=' . (int)$agentId;
 
     // If shop ID found, fetch shop details
     if ($shopId) {
-        $stmtS = $db->prepare("SELECT shop_name, shop_address, mobile_number, whatsapp_number FROM users WHERE id = ?");
+        $stmtS = $db->prepare("SELECT shop_name, shop_address, city, state, pincode, mobile_number, whatsapp_number FROM users WHERE id = ?");
         $stmtS->execute([$shopId]);
         $shopData = $stmtS->fetch(PDO::FETCH_ASSOC);
-        if ($shopData && (!empty($shopData['shop_address']) || !empty($shopData['mobile_number']))) {
-            return [
-                'shop_name'    => !empty($shopData['shop_name']) ? $shopData['shop_name'] : 'Our Center',
-                'shop_address' => !empty($shopData['shop_address']) ? $shopData['shop_address'] : 'our testing center',
-                'mobile_number'=> !empty($shopData['mobile_number']) ? $shopData['mobile_number'] : ($shopData['whatsapp_number'] ?? 'our office'),
-                'centers_link' => $centersLink
-            ];
+        if ($shopData) {
+            $shopName = !empty($shopData['shop_name']) ? trim($shopData['shop_name']) : '';
+            $addressParts = array_filter([
+                trim($shopData['shop_address'] ?? ''),
+                trim($shopData['city'] ?? ''),
+                trim($shopData['state'] ?? ''),
+                trim($shopData['pincode'] ?? '')
+            ]);
+            $fullAddress = !empty($addressParts) ? implode(', ', $addressParts) : '';
+            $mobile = !empty($shopData['mobile_number']) ? trim($shopData['mobile_number']) : trim($shopData['whatsapp_number'] ?? '');
+            
+            if (!empty($shopName) || !empty($fullAddress) || !empty($mobile)) {
+                return [
+                    'shop_name'    => !empty($shopName) ? $shopName : 'Our Testing Center',
+                    'shop_address' => !empty($fullAddress) ? $fullAddress : (!empty($shopName) ? $shopName : 'our testing center'),
+                    'mobile_number'=> !empty($mobile) ? $mobile : 'our office',
+                    'centers_link' => $centersLink . '&shop_id=' . (int)$shopId
+                ];
+            }
         }
     }
     
     // Fallback to parent agent
-    $stmtA = $db->prepare("SELECT shop_name, shop_address, mobile_number, whatsapp_number FROM users WHERE id = ?");
+    $stmtA = $db->prepare("SELECT shop_name, shop_address, city, state, pincode, mobile_number, whatsapp_number FROM users WHERE id = ?");
     $stmtA->execute([$agentId]);
     $agentData = $stmtA->fetch(PDO::FETCH_ASSOC);
     
+    $agentShopName = !empty($agentData['shop_name']) ? trim($agentData['shop_name']) : '';
+    $agentAddressParts = array_filter([
+        trim($agentData['shop_address'] ?? ''),
+        trim($agentData['city'] ?? ''),
+        trim($agentData['state'] ?? ''),
+        trim($agentData['pincode'] ?? '')
+    ]);
+    $agentFullAddress = !empty($agentAddressParts) ? implode(', ', $agentAddressParts) : '';
+    $agentMobile = !empty($agentData['mobile_number']) ? trim($agentData['mobile_number']) : trim($agentData['whatsapp_number'] ?? '');
+    
     return [
-        'shop_name'    => !empty($agentData['shop_name']) ? $agentData['shop_name'] : 'Our Center',
-        'shop_address' => !empty($agentData['shop_address']) ? $agentData['shop_address'] : 'our testing center',
-        'mobile_number'=> !empty($agentData['mobile_number']) ? $agentData['mobile_number'] : ($agentData['whatsapp_number'] ?? 'our office'),
+        'shop_name'    => !empty($agentShopName) ? $agentShopName : 'Our Testing Center',
+        'shop_address' => !empty($agentFullAddress) ? $agentFullAddress : (!empty($agentShopName) ? $agentShopName : 'our testing center'),
+        'mobile_number'=> !empty($agentMobile) ? $agentMobile : 'our office',
         'centers_link' => $centersLink
     ];
 }
@@ -398,12 +447,14 @@ function getShopDetailsForReminder($vehicleId, $remType, $agentId) {
  * If API access is not configured, it will simulate a successful send for testing.
  * @param string $whatsappNumber
  * @param string $message
- * @param string $customerName
+ * @param string $centerName (Shop / Center Name for template param {{3}})
  * @param string $vehicleNumber
  * @param string $expiryDate
+ * @param string $shopPhone
+ * @param string $centersUrl
  * @return array ('success' => bool, 'response' => string)
  */
-function sendWhatsAppMessage($whatsappNumber, $message, $customerName = '', $vehicleNumber = '', $expiryDate = '', $shopPhone = '', $centersUrl = '') {
+function sendWhatsAppMessage($whatsappNumber, $message, $centerName = '', $vehicleNumber = '', $expiryDate = '', $shopPhone = '', $centersUrl = '') {
     $settings = getSystemSettings();
     $db = getDBConnection();
     
@@ -436,12 +487,12 @@ function sendWhatsAppMessage($whatsappNumber, $message, $customerName = '', $veh
                 ];
             } else {
                 // Custom template: alert_pollution has 5 params
-                // {{1}} vehicle_number, {{2}} expiry_date, {{3}} shop_name/address, {{4}} shop_phone, {{5}} centers_url
-                $defaultUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php';
+                // {{1}} vehicle_number, {{2}} expiry_date, {{3}} shop_name/center_name, {{4}} shop_phone, {{5}} centers_url
+                $defaultUrl = getBaseUrl() . '/centers.php';
                 $params = [
                     ['type' => 'text', 'text' => !empty($vehicleNumber) ? (string)$vehicleNumber : 'N/A'],
                     ['type' => 'text', 'text' => !empty($expiryDate)    ? (string)$expiryDate    : 'N/A'],
-                    ['type' => 'text', 'text' => !empty($customerName)  ? (string)$customerName  : 'our center'],
+                    ['type' => 'text', 'text' => !empty($centerName)    ? (string)$centerName    : 'our testing center'],
                     ['type' => 'text', 'text' => !empty($shopPhone)     ? (string)$shopPhone     : 'N/A'],
                     ['type' => 'text', 'text' => !empty($centersUrl)    ? (string)$centersUrl    : $defaultUrl],
                 ];

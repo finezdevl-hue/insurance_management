@@ -70,20 +70,26 @@ if ($action === 'send_single') {
     }
     
     $shopInfo = getShopDetailsForReminder($vehicleId, $type, $agentId);
+    $shopName = $shopInfo['shop_name'];
     $shopAddress = $shopInfo['shop_address'];
     $shopMobile = $shopInfo['mobile_number'];
-    $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
+    $centersUrl = $shopInfo['centers_link'];
+    
+    $centerLocationText = $shopName;
+    if (!empty($shopAddress) && $shopAddress !== $shopName && $shopAddress !== 'our testing center') {
+        $centerLocationText .= ' (' . $shopAddress . ')';
+    }
     
     $targetNumber = !empty($whatsapp) ? $whatsapp : (!empty($customer['whatsapp_number']) ? $customer['whatsapp_number'] : $customer['mobile_number']);
     
     if ($type === 'Pollution') {
-        $message = "Dear {$customer['name']},\n\nThis is an automated reminder that the Pollution Certificate (PUC) for vehicle {$vehNumber} is expiring on {$expiryDate}.\n\nPlease visit our testing center at {$shopAddress} (Phone: {$shopMobile}) to renew it.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
+        $message = "Dear Customer,\n\nThis is an automated reminder that the Pollution Certificate (PUC) for vehicle {$vehNumber} is expiring on {$expiryDate}.\n\nPlease visit our testing center at {$centerLocationText} (Phone: {$shopMobile}) to renew it.\n\nView Testing Centers & Directions:\n{$centersUrl}\n\nThank You.";
     } else {
-        $message = "Dear {$customer['name']},\n\nThis is an automated reminder that your {$type} for {$vehNumber} is expiring on {$expiryDate}.\n\nPlease renew it to stay protected. Contact: {$shopMobile}.\n\nView Testing Centers:\n{$centersUrl}";
+        $message = "Dear Customer,\n\nThis is an automated reminder that your {$type} for {$vehNumber} is expiring on {$expiryDate}.\n\nPlease renew it to stay protected. Contact {$shopName}: {$shopMobile}.\n\nView Testing Centers:\n{$centersUrl}";
     }
     
-    // Execute WhatsApp Send API
-    $result = sendWhatsAppMessage($targetNumber, $message, $customer['name'], $vehNumber, $expiryDate, $shopMobile, $centersUrl);
+    // Execute WhatsApp Send API (passing $shopName for template param {{3}})
+    $result = sendWhatsAppMessage($targetNumber, $message, $shopName, $vehNumber, $expiryDate, $shopMobile, $centersUrl);
     
     // Deduct Message Credit
     deductAgentMessages($agentId, 1);

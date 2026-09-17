@@ -74,13 +74,15 @@ if ($action === 'send_reminder' && isset($_GET['id'])) {
             $expDays = getDaysUntil($policy['expiry_date']);
             $expiryFormatted = date('d-M-Y', strtotime($policy['expiry_date']));
             
-            $stmtA = $db->prepare("SELECT mobile_number FROM users WHERE id = ?");
+            $stmtA = $db->prepare("SELECT shop_name, mobile_number, whatsapp_number FROM users WHERE id = ?");
             $stmtA->execute([$agentId]);
-            $agentMobile = $stmtA->fetchColumn();
-            $centersUrl = (defined('SITE_URL') ? rtrim(SITE_URL, '/') : 'http://localhost/vehicle_manage') . '/centers.php?agent_id=' . $agentId;
+            $agentUser = $stmtA->fetch();
+            $agentMobile = !empty($agentUser['mobile_number']) ? $agentUser['mobile_number'] : ($agentUser['whatsapp_number'] ?? '');
+            $shopName = !empty($agentUser['shop_name']) ? $agentUser['shop_name'] : 'Our Office';
+            $centersUrl = getBaseUrl() . '/centers.php?agent_id=' . (int)$agentId;
             $msg = "Dear Customer,\n\nThis is a gentle reminder that your Health Insurance Policy *{$policy['policy_number']}* ({$policy['policy_name']}) is due for renewal on *{$expiryFormatted}* (in {$expDays} days).\n\nTo ensure continuous coverage and peace of mind for you and your family, please reach out to us at *{$agentMobile}* to complete your renewal.\n\nView Our Outlets & Details:\n{$centersUrl}\n\nThank you for choosing our services!";
             
-            $res = sendWhatsAppMessage($policy['whatsapp_number'], $msg, $policy['customer_name'], $policy['policy_number'], $expiryFormatted);
+            $res = sendWhatsAppMessage($policy['whatsapp_number'], $msg, $shopName, $policy['policy_number'], $expiryFormatted, $agentMobile, $centersUrl);
             
             // Log reminder in history
             $stmtHist = $db->prepare("
