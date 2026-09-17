@@ -1,3 +1,19 @@
 [2026-09-16 10:52:17] [QUERY] [Time: 2050.40ms] [User: #0] [IP: CLI] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
 [2026-09-16 10:52:17] [QUERY] [Time: 2.45ms] [User: #0] [IP: CLI] Query: SELECT * FROM users LIMIT 5 | Params: [] | Status: SUCCESS
 [2026-09-16 10:52:40] [QUERY] [Time: 2038.58ms] [User: #0] [IP: CLI] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-16 12:11:30] [QUERY] [Time: 2055.32ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-16 12:11:48] [QUERY] [Time: 2050.66ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:35:29] [QUERY] [Time: 2078.29ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:35:36] [QUERY] [Time: 2052.36ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:35:39] [QUERY] [Time: 2052.55ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:35:45] [QUERY] [Time: 2048.07ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:35:48] [QUERY] [Time: 2064.64ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:01] [QUERY] [Time: 2048.63ms] [User: #0] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:11] [QUERY] [Time: 2059.40ms] [User: #0] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:13] [QUERY] [Time: 2055.49ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:20] [QUERY] [Time: 2045.12ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:23] [QUERY] [Time: 2048.50ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:27] [QUERY] [Time: 2039.80ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:30] [QUERY] [Time: 2042.90ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:32] [QUERY] [Time: 2067.23ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS
+[2026-09-17 06:36:43] [QUERY] [Time: 2040.85ms] [User: #1] [IP: ::1] Query: CONNECT TO DATABASE vehicle_manage | Params: [] | Status: SUCCESS

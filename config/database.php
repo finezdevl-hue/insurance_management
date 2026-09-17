@@ -296,7 +296,25 @@ function ensureRuntimeSchema(PDO $pdo) {
     $running = false;
 }
 
-// Start PHP session globally if it hasn't been started already
+// Start PHP session globally with proper domain-wide cookie settings
 if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+               (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ||
+               (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
+
+    // Set cookie parameters to root path '/' so session is preserved across /admin, /agent, and /mobile
+    if (PHP_VERSION_ID >= 70300) {
+        session_set_cookie_params([
+            'lifetime' => 86400 * 30, // 30 days
+            'path'     => '/',
+            'domain'   => '',
+            'secure'   => $isHttps,
+            'httponly' => true,
+            'samesite' => 'Lax'
+        ]);
+    } else {
+        session_set_cookie_params(86400 * 30, '/', '', $isHttps, true);
+    }
+
+    @session_start();
 }

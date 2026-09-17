@@ -79,16 +79,11 @@ function checkAccess($role) {
         redirect($loginUrl);
     }
     
+    $userRole = $_SESSION['role'] ?? '';
+    
     // Safety check: if session role is set but is invalid, destroy active session
-    if (!isset($_SESSION['role']) || !in_array($_SESSION['role'], ['admin', 'agent', 'shop'])) {
+    if (!in_array($userRole, ['admin', 'agent', 'shop'])) {
         $_SESSION = [];
-        if (ini_get("session.use_cookies")) {
-            $params = session_get_cookie_params();
-            setcookie(session_name(), '', time() - 42000,
-                $params["path"], $params["domain"],
-                $params["secure"], $params["httponly"]
-            );
-        }
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_destroy();
         }
@@ -96,49 +91,69 @@ function checkAccess($role) {
     }
     
     // Real-time status and expiry check for logged-in user
-    $db = getDBConnection();
-    $stmt = $db->prepare("SELECT status, expiry_date, parent_agent_id FROM users WHERE id = ? LIMIT 1");
-    $stmt->execute([$_SESSION['user_id']]);
-    $userStatus = $stmt->fetch();
-    
-    // If shop role, also check parent agent status
-    $parentSuspended = false;
-    if ($userStatus && !empty($userStatus['parent_agent_id'])) {
-        $stmtP = $db->prepare("SELECT status FROM users WHERE id = ? LIMIT 1");
-        $stmtP->execute([$userStatus['parent_agent_id']]);
-        $pStatus = $stmtP->fetchColumn();
-        if ($pStatus === 'suspended') {
-            $parentSuspended = true;
-        }
-    }
-    
-    if (!$userStatus || $userStatus['status'] === 'suspended' || $parentSuspended || (!empty($userStatus['expiry_date']) && date('Y-m-d') > $userStatus['expiry_date'])) {
-        // Destroy session and force logout
-        $_SESSION = [];
-        if (ini_get("session.use_cookies")) {
-            $params = session_get_cookie_params();
-            setcookie(session_name(), '', time() - 42000,
-                $params["path"], $params["domain"],
-                $params["secure"], $params["httponly"]
-            );
-        }
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
+    try {
+        $db = getDBConnection();
+        $stmt = $db->prepare("SELECT id, status, expiry_date, parent_agent_id, role FROM users WHERE id = ? LIMIT 1");
+        $stmt->execute([$_SESSION['user_id']]);
+        $userStatus = $stmt->fetch();
         
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
+        if ($userStatus) {
+            // Check account suspension
+            if ($userStatus['status'] === 'suspended') {
+                $_SESSION = [];
+                if (session_status() === PHP_SESSION_ACTIVE) {
+                    session_destroy();
+                }
+                if (session_status() === PHP_SESSION_NONE) {
+                    session_start();
+                }
+                $_SESSION['alert_error'] = 'Your account has been suspended. Please contact Super Admin.';
+                redirect($loginUrl);
+            }
+
+            // Check parent agency suspension for sub-shops
+            if ($userRole === 'shop' && !empty($userStatus['parent_agent_id'])) {
+                $stmtP = $db->prepare("SELECT status FROM users WHERE id = ? LIMIT 1");
+                $stmtP->execute([$userStatus['parent_agent_id']]);
+                $parentStatus = $stmtP->fetchColumn();
+                if ($parentStatus === 'suspended') {
+                    $_SESSION = [];
+                    if (session_status() === PHP_SESSION_ACTIVE) {
+                        session_destroy();
+                    }
+                    if (session_status() === PHP_SESSION_NONE) {
+                        session_start();
+                    }
+                    $_SESSION['alert_error'] = 'Your parent agency account is suspended. Please contact Super Admin.';
+                    redirect($loginUrl);
+                }
+            }
+
+            // Expiry date check ONLY for agent & shop roles (NEVER for admin!)
+            if (in_array($userRole, ['agent', 'shop'])) {
+                if (!empty($userStatus['expiry_date']) && date('Y-m-d') > $userStatus['expiry_date']) {
+                    $_SESSION = [];
+                    if (session_status() === PHP_SESSION_ACTIVE) {
+                        session_destroy();
+                    }
+                    if (session_status() === PHP_SESSION_NONE) {
+                        session_start();
+                    }
+                    $_SESSION['alert_error'] = 'Your license expired on ' . date('d-M-Y', strtotime($userStatus['expiry_date'])) . '. Please renew your subscription.';
+                    redirect($loginUrl);
+                }
+            }
         }
-        $_SESSION['alert_error'] = 'Your session has expired or your account/parent agency has been suspended/expired. Please contact Super Admin.';
-        redirect($loginUrl);
+    } catch (Throwable $e) {
+        logSystemError('CHECK_ACCESS_WARNING', "checkAccess DB validation warning: " . $e->getMessage(), $e->getFile(), $e->getLine());
     }
     
     if ($role === 'agent') {
-        if (!in_array($_SESSION['role'], ['agent', 'shop'])) {
+        if (!in_array($userRole, ['agent', 'shop'])) {
             redirect('../admin/index.php');
         }
     } elseif ($role === 'admin') {
-        if ($_SESSION['role'] !== 'admin') {
+        if ($userRole !== 'admin') {
             redirect('../agent/index.php');
         }
     }
