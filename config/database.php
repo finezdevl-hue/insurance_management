@@ -342,4 +342,11 @@ if (session_status() === PHP_SESSION_NONE) {
     }
 
     @session_start();
+
+    // Prevent Cloudways Varnish / Nginx caching from serving stale redirects or cached pages
+    if (!headers_sent()) {
+        header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0, private");
+        header("Pragma: no-cache");
+        header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
+    }
 }

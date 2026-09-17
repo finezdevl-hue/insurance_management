@@ -16,7 +16,12 @@ if (!isset($_SESSION['test_counter'])) {
 
 $sessionId = session_id();
 $cookieParams = session_get_cookie_params();
-$currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]";
+// Session file inspection
+$sessionFile = rtrim($savePath, '/\\') . '/sess_' . $sessionId;
+$fileExists = file_exists($sessionFile);
+$fileSize = $fileExists ? filesize($sessionFile) : 0;
+$fileContent = $fileExists ? @file_get_contents($sessionFile) : 'File not created yet';
+$serverTime = date('Y-m-d H:i:s') . ' (Microtime: ' . microtime(true) . ')';
 
 ?>
 <!DOCTYPE html>
@@ -25,7 +30,7 @@ $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" 
     <title>Session Persistence Test</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 30px; background: #f8fafc; color: #1e293b; }
-        .card { max-width: 650px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .card { max-width: 680px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
         h2 { margin-top: 0; color: #0f172a; }
         .badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-weight: 600; font-size: 13px; }
         .badge-success { background: #dcfce7; color: #15803d; }
@@ -33,31 +38,42 @@ $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" 
         table { width: 100%; border-collapse: collapse; margin: 15px 0; }
         th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #f1f5f9; font-size: 14px; }
         th { color: #64748b; font-weight: 600; }
-        .btn { display: inline-block; background: #059669; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 15px; }
+        .btn { display: inline-block; background: #059669; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 15px; border: none; cursor: pointer; }
         .btn:hover { background: #047857; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>Live Session Test</h2>
-        <p>Click the button below. If the counter increases on every click, sessions are working.</p>
+        <h2>Live Session Diagnostics</h2>
+        <p>Live Server Generated Time: <strong><?php echo $serverTime; ?></strong></p>
 
         <table>
             <tr>
                 <th>Session Counter</th>
-                <td><strong style="font-size: 20px; color: #059669;"><?php echo $_SESSION['test_counter']; ?></strong></td>
+                <td><strong style="font-size: 24px; color: #059669;"><?php echo $_SESSION['test_counter']; ?></strong></td>
             </tr>
             <tr>
                 <th>Active Session ID</th>
                 <td><code><?php echo htmlspecialchars($sessionId); ?></code></td>
             </tr>
             <tr>
-                <th>Received PHPSESSID Cookie</th>
+                <th>Received Cookie</th>
                 <td>
                     <?php if (isset($_COOKIE['PHPSESSID'])): ?>
                         <span class="badge badge-success">RECEIVED: <?php echo htmlspecialchars($_COOKIE['PHPSESSID']); ?></span>
                     <?php else: ?>
-                        <span class="badge badge-danger">NONE (Browser is not sending session cookie back!)</span>
+                        <span class="badge badge-danger">NONE (Browser is not sending cookie)</span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <tr>
+                <th>Session File on Disk</th>
+                <td>
+                    <?php if ($fileExists): ?>
+                        <span class="badge badge-success">EXISTS (<?php echo $fileSize; ?> bytes)</span>
+                        <div style="margin-top:5px;font-size:12px;color:#64748b;">Content: <code><?php echo htmlspecialchars($fileContent); ?></code></div>
+                    <?php else: ?>
+                        <span class="badge badge-danger">FILE DOES NOT EXIST ON DISK</span>
                     <?php endif; ?>
                 </td>
             </tr>
@@ -71,34 +87,23 @@ $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" 
                     <?php if ($isWritable): ?>
                         <span class="badge badge-success">YES (Writable)</span>
                     <?php else: ?>
-                        <span class="badge badge-danger">NO (Permission Denied / Read Only!)</span>
+                        <span class="badge badge-danger">NO (Permission Denied)</span>
                     <?php endif; ?>
                 </td>
             </tr>
             <tr>
-                <th>Protocol (HTTPS / HTTP)</th>
-                <td><?php echo (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'HTTPS' : 'HTTP (Plain)'; ?></td>
-            </tr>
-            <tr>
-                <th>Cookie Path</th>
-                <td><code><?php echo htmlspecialchars($cookieParams['path']); ?></code></td>
-            </tr>
-            <tr>
-                <th>Cookie Secure Flag</th>
-                <td><?php echo $cookieParams['secure'] ? 'TRUE (HTTPS Only)' : 'FALSE'; ?></td>
-            </tr>
-            <tr>
-                <th>Cookie SameSite</th>
-                <td><?php echo htmlspecialchars($cookieParams['samesite'] ?? 'None'); ?></td>
-            </tr>
-            <tr>
-                <th>Logged In User ID</th>
-                <td><?php echo isset($_SESSION['user_id']) ? "User #" . htmlspecialchars((string)$_SESSION['user_id']) . " (" . htmlspecialchars($_SESSION['role'] ?? '') . ")" : "<span style='color:#ef4444;'>Not Logged In in this session</span>"; ?></td>
+                <th>Cookie Parameters</th>
+                <td>Path: <code><?php echo htmlspecialchars($cookieParams['path']); ?></code> | Secure: <?php echo $cookieParams['secure'] ? 'TRUE' : 'FALSE'; ?> | SameSite: <?php echo htmlspecialchars($cookieParams['samesite'] ?? 'None'); ?></td>
             </tr>
         </table>
 
-        <a href="test_session.php" class="btn">Click to Test Session Counter (+1)</a>
-        <a href="index.php" class="btn" style="background:#475569; margin-left: 10px;">Go to Login Page</a>
+        <div style="display:flex;gap:10px;margin-top:15px;flex-wrap:wrap;">
+            <a href="test_session.php?rand=<?php echo microtime(true); ?>" class="btn">Test via GET (Bypass Cache)</a>
+            <form action="test_session.php" method="POST" style="margin:0;">
+                <button type="submit" class="btn" style="background:#2563eb;">Test via POST (Never Cached)</button>
+            </form>
+            <a href="index.php" class="btn" style="background:#475569;">Go to Login</a>
+        </div>
     </div>
 </body>
 </html>
